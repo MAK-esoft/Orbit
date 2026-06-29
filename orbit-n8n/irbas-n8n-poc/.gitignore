@@ -1,0 +1,11 @@
+# Secrets
+.env
+
+# n8n runtime data (workflows, credentials, sqlite db)
+n8n-data/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+node_modules/

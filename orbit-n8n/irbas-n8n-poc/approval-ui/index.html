@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IRBAS — Approval Queue</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800">
+  <!-- ============================================================
+       CONFIG  —  REPLACE THESE TWO VALUES
+       Use the Supabase project URL and the *anon* key (NOT the
+       service_role key — this runs in the browser).
+       RLS is disabled for the POC; re-enable + add policies before prod.
+       ============================================================ -->
+  <script>
+    const SUPABASE_URL = "https://xzofuteajpzssucyfhkf.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_eUAahk3hrJXsCcZbU7qb9g_3kCp-AIT"; // publishable (anon-equivalent) key
+  </script>
+
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">IRBAS Approval Queue</h1>
+        <p class="text-sm text-slate-500">Review &amp; approve pending payment / expense requests</p>
+      </div>
+      <button onclick="loadAll()" class="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm hover:bg-slate-700">
+        ↻ Refresh
+      </button>
+    </header>
+
+    <!-- Tabs -->
+    <div class="flex gap-2 mb-4 border-b border-slate-300">
+      <button id="tab-payment" onclick="switchTab('payment')"
+        class="px-4 py-2 font-medium border-b-2 border-emerald-600 text-emerald-700">
+        Payment Requests <span id="count-payment" class="ml-1 text-xs bg-emerald-100 text-emerald-700 rounded-full px-2">0</span>
+      </button>
+      <button id="tab-expense" onclick="switchTab('expense')"
+        class="px-4 py-2 font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700">
+        Expense Requests <span id="count-expense" class="ml-1 text-xs bg-slate-200 text-slate-700 rounded-full px-2">0</span>
+      </button>
+    </div>
+
+    <!-- Payment tab -->
+    <div id="panel-payment">
+      <table class="w-full bg-white rounded-lg shadow overflow-hidden text-sm">
+        <thead class="bg-slate-50 text-slate-600 text-left">
+          <tr>
+            <th class="p-3">RO</th>
+            <th class="p-3">Amount (PKR)</th>
+            <th class="p-3">Method</th>
+            <th class="p-3">Slip Ref</th>
+            <th class="p-3">Bank Match</th>
+            <th class="p-3">Received</th>
+            <th class="p-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rows-payment"></tbody>
+      </table>
+      <p id="empty-payment" class="hidden text-center text-slate-400 py-10">No pending payment requests 🎉</p>
+    </div>
+
+    <!-- Expense tab -->
+    <div id="panel-expense" class="hidden">
+      <table class="w-full bg-white rounded-lg shadow overflow-hidden text-sm">
+        <thead class="bg-slate-50 text-slate-600 text-left">
+          <tr>
+            <th class="p-3">RO</th>
+            <th class="p-3">Description</th>
+            <th class="p-3">Amount (PKR)</th>
+            <th class="p-3">Received</th>
+            <th class="p-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rows-expense"></tbody>
+      </table>
+      <p id="empty-expense" class="hidden text-center text-slate-400 py-10">No pending expense requests 🎉</p>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-lg text-white text-sm"></div>
+
+  <script>
+    // ---- tiny REST helpers --------------------------------------------------
+    const headers = {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+      "Content-Type": "application/json",
+    };
+    const api = (p) => SUPABASE_URL + "/rest/v1/" + p;
+
+    async function sbGet(path) {
+      const r = await fetch(api(path), { headers });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+    async function sbSend(method, path, body, prefer) {
+      const h = Object.assign({}, headers);
+      if (prefer) h["Prefer"] = prefer;
+      const r = await fetch(api(path), { method, headers: h, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(await r.text());
+      const txt = await r.text();
+      return txt ? JSON.parse(txt) : null;
+    }
+
+    function fmt(n) {
+      if (n === null || n === undefined || n === "") return "—";
+      return Number(n).toLocaleString("en-PK");
+    }
+    function fmtDate(d) {
+      if (!d) return "—";
+      return new Date(d).toLocaleString();
+    }
+    function toast(msg, ok = true) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.className = "fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-lg text-white text-sm " +
+        (ok ? "bg-emerald-600" : "bg-rose-600");
+      t.classList.remove("hidden");
+      setTimeout(() => t.classList.add("hidden"), 3000);
+    }
+
+    function switchTab(tab) {
+      const isPay = tab === "payment";
+      document.getElementById("panel-payment").classList.toggle("hidden", !isPay);
+      document.getElementById("panel-expense").classList.toggle("hidden", isPay);
+      style("tab-payment", isPay);
+      style("tab-expense", !isPay);
+    }
+    function style(id, active) {
+      const el = document.getElementById(id);
+      el.className = "px-4 py-2 font-medium border-b-2 " +
+        (active ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700");
+    }
+
+    // ---- load + render ------------------------------------------------------
+    async function loadAll() {
+      await Promise.all([loadPayments(), loadExpenses()]);
+    }
+
+    async function loadPayments() {
+      const tbody = document.getElementById("rows-payment");
+      tbody.innerHTML = "";
+      try {
+        const rows = await sbGet(
+          "payment_requests?status=eq.pending&select=*,regional_offices(name)&order=created_at.asc"
+        );
+        document.getElementById("count-payment").textContent = rows.length;
+        document.getElementById("empty-payment").classList.toggle("hidden", rows.length > 0);
+        for (const r of rows) {
+          const roName = r.regional_offices ? r.regional_offices.name : "—";
+          const match = r.bank_email_match
+            ? '<span class="text-emerald-600 font-bold">✓</span>'
+            : '<span class="text-rose-500 font-bold">✗</span>';
+          const tr = document.createElement("tr");
+          tr.className = "border-t border-slate-100";
+          tr.innerHTML =
+            '<td class="p-3">' + roName + '</td>' +
+            '<td class="p-3 font-semibold">' + fmt(r.amount_pkr) + '</td>' +
+            '<td class="p-3">' + (r.payment_method || "—") + '</td>' +
+            '<td class="p-3">' + (r.deposit_slip_ref || "—") + '</td>' +
+            '<td class="p-3 text-center">' + match + '</td>' +
+            '<td class="p-3 text-slate-500">' + fmtDate(r.created_at) + '</td>' +
+            '<td class="p-3 text-right whitespace-nowrap">' +
+              '<button class="px-3 py-1 bg-emerald-600 text-white rounded mr-1 hover:bg-emerald-500">Approve</button>' +
+              '<button class="px-3 py-1 bg-rose-500 text-white rounded hover:bg-rose-400">Reject</button>' +
+            '</td>';
+          const [approveBtn, rejectBtn] = tr.querySelectorAll("button");
+          approveBtn.onclick = () => approvePayment(r, tr);
+          rejectBtn.onclick = () => rejectItem("payment_requests", r.id, tr, "payment");
+          tbody.appendChild(tr);
+        }
+      } catch (e) {
+        toast("Failed to load payments: " + e.message, false);
+      }
+    }
+
+    async function loadExpenses() {
+      const tbody = document.getElementById("rows-expense");
+      tbody.innerHTML = "";
+      try {
+        const rows = await sbGet(
+          "expense_requests?status=eq.pending&select=*,regional_offices(name)&order=created_at.asc"
+        );
+        document.getElementById("count-expense").textContent = rows.length;
+        document.getElementById("empty-expense").classList.toggle("hidden", rows.length > 0);
+        for (const r of rows) {
+          const roName = r.regional_offices ? r.regional_offices.name : "—";
+          const tr = document.createElement("tr");
+          tr.className = "border-t border-slate-100";
+          tr.innerHTML =
+            '<td class="p-3">' + roName + '</td>' +
+            '<td class="p-3">' + (r.description || "—") + '</td>' +
+            '<td class="p-3 font-semibold">' + fmt(r.amount_pkr) + '</td>' +
+            '<td class="p-3 text-slate-500">' + fmtDate(r.created_at) + '</td>' +
+            '<td class="p-3 text-right whitespace-nowrap">' +
+              '<button class="px-3 py-1 bg-emerald-600 text-white rounded mr-1 hover:bg-emerald-500">Approve</button>' +
+              '<button class="px-3 py-1 bg-rose-500 text-white rounded hover:bg-rose-400">Reject</button>' +
+            '</td>';
+          const [approveBtn, rejectBtn] = tr.querySelectorAll("button");
+          approveBtn.onclick = () => approveExpense(r, tr);
+          rejectBtn.onclick = () => rejectItem("expense_requests", r.id, tr, "expense");
+          tbody.appendChild(tr);
+        }
+      } catch (e) {
+        toast("Failed to load expenses: " + e.message, false);
+      }
+    }
+
+    // ---- actions ------------------------------------------------------------
+    async function adjustBalance(roId, delta) {
+      if (!roId) return;
+      const ro = await sbGet("regional_offices?id=eq." + roId + "&select=balance_pkr");
+      const current = ro && ro[0] ? Number(ro[0].balance_pkr) : 0;
+      const next = current + delta;
+      await sbSend("PATCH", "regional_offices?id=eq." + roId, { balance_pkr: next });
+    }
+
+    async function approvePayment(r, tr) {
+      try {
+        await sbSend("PATCH", "payment_requests?id=eq." + r.id, {
+          status: "approved",
+          approved_by: "accountant_ui",
+          approved_at: new Date().toISOString(),
+        });
+        await sbSend("POST", "ledger_entries", {
+          ro_id: r.ro_id,
+          entry_type: "payment_received",
+          amount_pkr: r.amount_pkr,
+          reference_id: r.id,
+          description: "Payment approved" + (r.deposit_slip_ref ? " (slip " + r.deposit_slip_ref + ")" : ""),
+        });
+        await adjustBalance(r.ro_id, Number(r.amount_pkr) || 0); // payment received -> balance up
+        tr.remove();
+        toast("Payment approved + ledger entry created");
+        loadPayments();
+      } catch (e) {
+        toast("Approve failed: " + e.message, false);
+      }
+    }
+
+    async function approveExpense(r, tr) {
+      try {
+        await sbSend("PATCH", "expense_requests?id=eq." + r.id, {
+          status: "approved",
+          approved_by: "accountant_ui",
+          approved_at: new Date().toISOString(),
+        });
+        await sbSend("POST", "ledger_entries", {
+          ro_id: r.ro_id,
+          entry_type: "expense_deducted",
+          amount_pkr: r.amount_pkr,
+          reference_id: r.id,
+          description: r.description || "Expense approved",
+        });
+        await adjustBalance(r.ro_id, -(Number(r.amount_pkr) || 0)); // expense -> balance down
+        tr.remove();
+        toast("Expense approved + ledger entry created");
+        loadExpenses();
+      } catch (e) {
+        toast("Approve failed: " + e.message, false);
+      }
+    }
+
+    async function rejectItem(table, id, tr, kind) {
+      const reason = prompt("Rejection reason?");
+      if (reason === null) return; // cancelled
+      try {
+        await sbSend("PATCH", table + "?id=eq." + id, {
+          status: "rejected",
+          rejection_reason: reason || "(no reason given)",
+          approved_by: "accountant_ui",
+          approved_at: new Date().toISOString(),
+        });
+        tr.remove();
+        toast("Request rejected");
+        kind === "payment" ? loadPayments() : loadExpenses();
+      } catch (e) {
+        toast("Reject failed: " + e.message, false);
+      }
+    }
+
+    // ---- init ---------------------------------------------------------------
+    if (SUPABASE_URL.includes("YOUR-PROJECT")) {
+      toast("⚠ Edit index.html: set SUPABASE_URL and SUPABASE_ANON_KEY", false);
+    } else {
+      loadAll();
+    }
+  </script>
+</body>
+</html>

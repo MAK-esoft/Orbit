@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: orbit-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orbit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orbit}
+      POSTGRES_DB: ${POSTGRES_DB:-orbit}
+    ports:
+      # Host 5440 → container 5432 (5432 is used by another local stack)
+      - "5440:5432"
+    volumes:
+      - orbit_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orbit} -d ${POSTGRES_DB:-orbit}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: orbit-redis
+    restart: unless-stopped
+    ports:
+      # Host 6380 → container 6379 (6379 is used by another local stack)
+      - "6380:6379"
+    volumes:
+      - orbit_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  orbit_pgdata:
+  orbit_redisdata:

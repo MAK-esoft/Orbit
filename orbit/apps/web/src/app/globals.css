@@ -1,0 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #18181b;
+  --color-primary-light: #f4f4f5;
+  --color-surface: #ffffff;
+  --color-bg: #fafafa;
+  --color-border: #e4e4e7;
+  --color-text-primary: #18181b;
+  --color-text-secondary: #71717a;
+  /* Semantic status colours retained for clarity-at-a-glance (spec §10.1) */
+  --color-status-submitted: #3b82f6;
+  --color-status-review: #f59e0b;
+  --color-status-approved: #10b981;
+  --color-status-rejected: #ef4444;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-text-primary font-sans text-body antialiased;
+  }
+}

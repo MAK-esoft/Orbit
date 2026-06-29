@@ -1,0 +1,42 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: irbas-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # --- Basic auth (login to the n8n editor) ---
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      # --- Encryption key (used to encrypt stored credentials) ---
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      # --- Public webhook URL ---
+      # Defaults to localhost; set WEBHOOK_URL in .env to a tunnel URL
+      # (e.g. cloudflared/ngrok) so Slack/WhatsApp can reach webhooks.
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678}
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      # --- Expose the secrets below to workflow expressions via {{ $env.X }} ---
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # --- Orbit API (single source of truth — replaces Supabase) ---
+      - ORBIT_API_BASE_URL=${ORBIT_API_BASE_URL}
+      - INTEGRATION_API_KEY=${INTEGRATION_API_KEY}
+      - IRBAS_BANK_EMAIL=${IRBAS_BANK_EMAIL}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      # --- Allow workflows to read process env via $env in expressions ---
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # --- Quieten POC permission warnings ---
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+    volumes:
+      # Named volume avoids host-filesystem permission issues (esp. on Windows/WSL2).
+      # Data still persists across restarts. Inspect with: docker volume inspect irbas-n8n-poc_n8n_data
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  n8n_data:

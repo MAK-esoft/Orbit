@@ -1,0 +1,27 @@
+{
+  "name": "orbit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Orbit — payment-proof management platform for IRBAS",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "start": "turbo run start",
+    "db:up": "docker compose up -d postgres redis",
+    "db:down": "docker compose down",
+    "prisma:migrate": "npm run prisma:migrate -w @orbit/api",
+    "prisma:generate": "npm run prisma:generate -w @orbit/api",
+    "seed": "npm run seed -w @orbit/api"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@11.12.1"
+}
