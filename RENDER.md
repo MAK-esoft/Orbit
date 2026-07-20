@@ -64,8 +64,10 @@ on the affected services.
 The hosted n8n starts empty. Open the **n8n URL** (basic-auth user `admin`, password
 = the auto-generated `N8N_BASIC_AUTH_PASSWORD` from its Environment tab), then:
 
-- **⋯ → Import from File** → upload `orbit-n8n/irbas-n8n-poc/n8n-workflows/irbas_whatsapp_flow.json`
-- **Save**, then toggle **Active**.
+- **⋯ → Import from File** → upload `orbit-n8n/irbas-n8n-poc/n8n-workflows/irbas_orbit_flow.json`
+  (the simplified flow — WhatsApp inbound + App round-trip, no Gmail/Slack credential
+  nodes so it activates cleanly).
+- **Save**, then **Publish / Activate** it.
 
 This registers `POST/GET /webhook/whatsapp-incoming` and `/webhook/app-submission`
 on the public n8n URL. Because all secrets come from `$env.*`, no n8n credentials
