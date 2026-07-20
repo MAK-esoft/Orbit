@@ -2,11 +2,18 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // Disable the built-in body parser so we can raise the JSON limit — the
+  // workflow ingest endpoint receives base64 proof images that exceed the
+  // default 100kb. (Multipart uploads are handled by Multer, not this parser.)
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
   const config = app.get(ConfigService);
+
+  app.use(json({ limit: '25mb' }));
+  app.use(urlencoded({ extended: true, limit: '25mb' }));
 
   app.setGlobalPrefix('api');
   app.use(cookieParser());

@@ -199,7 +199,20 @@
     },
     {
       "parameters": {
-        "jsCode": "// Base64-encode the downloaded image and build an OpenAI vision request.\nconst item = $input.first();\nlet mime = $node['Extract Fields'].json.media_mime || 'image/jpeg';\nlet b64 = '';\nif (item.binary && item.binary.data) {\n  if (item.binary.data.mimeType) mime = item.binary.data.mimeType;\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  b64 = buf.toString('base64');\n}\nif (!mime || mime.indexOf('image/') !== 0) mime = 'image/jpeg';\nconst caption = $node['Extract Fields'].json.message_text || '';\n\nconst system = \"You are a classifier for payment/expense PROOF images sent by Pakistani Regional Office accountants. Respond with ONLY valid JSON — no explanation, no markdown, no backticks. Just the raw JSON object.\";\n\nconst user = [\n  'This image is a financial document sent by an accountant — usually a bank deposit slip, a bank transfer/payment screenshot, a cheque, or a purchase/transaction receipt.',\n  caption ? ('Caption sent with the image: \"' + caption + '\"') : 'No caption was sent with the image.',\n  '',\n  'Read ALL text in the image, then extract the fields and classify. ALWAYS extract whatever is visible — do not return nulls if the value is present in the image. Respond with ONLY this JSON structure:',\n  '{',\n  '  \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\",',\n  '  \"amount_pkr\": <number or null>,',\n  '  \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"card\" | \"unknown\" | null,',\n  '  \"deposit_slip_ref\": \"<transaction id / reference / slip number, or null>\",',\n  '  \"description\": \"<one line: merchant or purpose + key details>\",',\n  '  \"fields\": [ { \"label\": \"<Title Case label>\", \"value\": \"<text as printed>\" } ]',\n  '}',\n  '',\n  'For \"fields\": include EVERY distinct piece of information actually visible on the document as a {label, value} pair — e.g. Amount, Account Title, Account Number, IBAN, Bank, Branch, Beneficiary Name, Sender Name, Date, Time, Transaction ID, Reference, Channel, Status, Card. ONLY include a field whose value is present; OMIT anything not shown. Never invent values.',\n  '',\n  'Classification (be generous — extract first, classify second):',\n  '- payment_proof: a deposit, bank transfer, or payment showing money sent or received.',\n  '- expense_proof: a purchase, card transaction, bill, or any receipt for money spent.',\n  '- unrecognised: ONLY when the image contains no financial transaction at all.',\n  '',\n  'Amount: use the MAIN total. Strip commas and currency symbols: \"Rs. 1,317.55\" -> 1317.55, \"450,000\" -> 450000.'\n].join('\\n');\n\nreturn [{ json: {\n  model: 'gpt-4o',\n  temperature: 0,\n  max_tokens: 400,\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: [\n      { type: 'text', text: user },\n      { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + b64 } }\n    ] }\n  ]\n} }];"
+        "jsCode": "const item = $input.first();\nlet mime = $node['Extract Fields'].json.media_mime || 'image/jpeg';\nlet b64 = '';\nif (item.binary && item.binary.data) {\n  if (item.binary.data.mimeType) mime = item.binary.data.mimeType;\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  b64 = buf.toString('base64');\n}\nif (!mime || mime.indexOf('image/') !== 0) mime = 'image/jpeg';\nconst ext = mime.indexOf('png') !== -1 ? 'png' : (mime.indexOf('webp') !== -1 ? 'webp' : 'jpg');\nreturn [{ json: { imageB64: b64, imageMime: mime, imageName: 'whatsapp-proof.' + ext } }];"
+      },
+      "id": "encode-image",
+      "name": "Encode Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the OpenAI vision request from the base64 produced by Encode Image.\nconst mime = $json.imageMime || 'image/jpeg';\nconst b64 = $json.imageB64 || '';\nconst caption = $node['Extract Fields'].json.message_text || '';\n\nconst system = \"You are a classifier for payment/expense PROOF images sent by Pakistani Regional Office accountants. Respond with ONLY valid JSON — no explanation, no markdown, no backticks. Just the raw JSON object.\";\n\nconst user = [\n  'This image is a financial document sent by an accountant — usually a bank deposit slip, a bank transfer/payment screenshot, a cheque, or a purchase/transaction receipt.',\n  caption ? ('Caption sent with the image: \"' + caption + '\"') : 'No caption was sent with the image.',\n  '',\n  'Read ALL text in the image, then extract the fields and classify. ALWAYS extract whatever is visible — do not return nulls if the value is present in the image. Respond with ONLY this JSON structure:',\n  '{',\n  '  \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\",',\n  '  \"amount_pkr\": <number or null>,',\n  '  \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"card\" | \"unknown\" | null,',\n  '  \"deposit_slip_ref\": \"<transaction id / reference / slip number, or null>\",',\n  '  \"description\": \"<one line: merchant or purpose + key details>\",',\n  '  \"fields\": [ { \"label\": \"<Title Case label>\", \"value\": \"<text as printed>\" } ]',\n  '}',\n  '',\n  'For \"fields\": include EVERY distinct piece of information actually visible on the document as a {label, value} pair — e.g. Amount, Account Title, Account Number, IBAN, Bank, Branch, Beneficiary Name, Sender Name, Date, Time, Transaction ID, Reference, Channel, Status, Card. ONLY include a field whose value is present; OMIT anything not shown. Never invent values.',\n  '',\n  'Classification (be generous — extract first, classify second):',\n  '- payment_proof: a deposit, bank transfer, or payment showing money sent or received.',\n  '- expense_proof: a purchase, card transaction, bill, or any receipt for money spent.',\n  '- unrecognised: ONLY when the image contains no financial transaction at all.',\n  '',\n  'Amount: use the MAIN total. Strip commas and currency symbols: \"Rs. 1,317.55\" -> 1317.55, \"450,000\" -> 450000.'\n].join('\\n');\n\nreturn [{ json: {\n  model: 'gpt-4o',\n  temperature: 0,\n  max_tokens: 400,\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: [\n      { type: 'text', text: user },\n      { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + b64 } }\n    ] }\n  ]\n} }];"
       },
       "id": "build-vision",
       "name": "Build Vision Body",
@@ -394,7 +407,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const c = $node['Parse Classification'].json;\nconst ef = $node['Extract Fields'].json;\nconst amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;\nreturn [{ json: {\n  source: 'WHATSAPP',\n  channelId: ef.group_id,\n  senderRef: ef.sender_phone || undefined,\n  messageText: ef.message_text || undefined,\n  workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,\n  amount,\n  referenceNumber: c.deposit_slip_ref || undefined,\n  extraction: {\n    classification: 'payment_proof',\n    extractedAmount: amount,\n    extractedPaymentMethod: c.payment_method || undefined,\n    slipRef: c.deposit_slip_ref || undefined,\n    description: c.description || undefined,\n    fields: Array.isArray(c.fields) ? c.fields : [],\n    bankEmailMatch: false,\n    model: (ef.media_url || ef.media_id) ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: c\n  }\n} }];"
+        "jsCode": "const c = $node['Parse Classification'].json;\nconst ef = $node['Extract Fields'].json;\nconst amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;\n// Attach the proof image if the vision path ran (Encode Image only executes\n// on the image branch; referencing it on the text path throws — guard it).\nlet img = {};\ntry {\n  const e = $('Encode Image').first().json;\n  if (e && e.imageB64) img = { imageBase64: e.imageB64, imageMime: e.imageMime, imageName: e.imageName };\n} catch (err) {}\nreturn [{ json: {\n  source: 'WHATSAPP',\n  channelId: ef.group_id,\n  senderRef: ef.sender_phone || undefined,\n  messageText: ef.message_text || undefined,\n  workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,\n  amount,\n  referenceNumber: c.deposit_slip_ref || undefined,\n  ...img,\n  extraction: {\n    classification: 'payment_proof',\n    extractedAmount: amount,\n    extractedPaymentMethod: c.payment_method || undefined,\n    slipRef: c.deposit_slip_ref || undefined,\n    description: c.description || undefined,\n    fields: Array.isArray(c.fields) ? c.fields : [],\n    bankEmailMatch: false,\n    model: (ef.media_url || ef.media_id) ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: c\n  }\n} }];"
       },
       "id": "build-payment-body",
       "name": "Build Payment Body",
@@ -439,7 +452,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const c = $node['Parse Classification'].json;\nconst ef = $node['Extract Fields'].json;\nconst amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;\nreturn [{ json: {\n  source: 'WHATSAPP',\n  channelId: ef.group_id,\n  senderRef: ef.sender_phone || undefined,\n  messageText: ef.message_text || undefined,\n  workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,\n  amount,\n  extraction: {\n    classification: 'expense_proof',\n    extractedAmount: amount,\n    extractedPaymentMethod: c.payment_method || undefined,\n    slipRef: c.deposit_slip_ref || undefined,\n    description: c.description || undefined,\n    fields: Array.isArray(c.fields) ? c.fields : [],\n    model: (ef.media_url || ef.media_id) ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: c\n  }\n} }];"
+        "jsCode": "const c = $node['Parse Classification'].json;\nconst ef = $node['Extract Fields'].json;\nconst amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;\nlet img = {};\ntry {\n  const e = $('Encode Image').first().json;\n  if (e && e.imageB64) img = { imageBase64: e.imageB64, imageMime: e.imageMime, imageName: e.imageName };\n} catch (err) {}\nreturn [{ json: {\n  source: 'WHATSAPP',\n  channelId: ef.group_id,\n  senderRef: ef.sender_phone || undefined,\n  messageText: ef.message_text || undefined,\n  workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,\n  amount,\n  ...img,\n  extraction: {\n    classification: 'expense_proof',\n    extractedAmount: amount,\n    extractedPaymentMethod: c.payment_method || undefined,\n    slipRef: c.deposit_slip_ref || undefined,\n    description: c.description || undefined,\n    fields: Array.isArray(c.fields) ? c.fields : [],\n    model: (ef.media_url || ef.media_id) ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: c\n  }\n} }];"
       },
       "id": "build-expense-body",
       "name": "Build Expense Body",
@@ -835,6 +848,17 @@
       ]
     },
     "Download WA Media": {
+      "main": [
+        [
+          {
+            "node": "Encode Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Encode Image": {
       "main": [
         [
           {

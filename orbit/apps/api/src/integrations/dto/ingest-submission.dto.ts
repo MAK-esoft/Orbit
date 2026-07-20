@@ -72,6 +72,20 @@ export class IngestSubmissionDto {
   @IsString()
   notes?: string;
 
+  // Optional proof image (base64, no data: prefix). When present it is stored
+  // via StorageService so the submission previews like an app upload.
+  @IsOptional()
+  @IsString()
+  imageBase64?: string;
+
+  @IsOptional()
+  @IsString()
+  imageMime?: string;
+
+  @IsOptional()
+  @IsString()
+  imageName?: string;
+
   @ValidateNested()
   @Type(() => ExtractionPayloadDto)
   extraction: ExtractionPayloadDto;

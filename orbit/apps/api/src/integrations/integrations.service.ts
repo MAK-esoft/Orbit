@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -75,6 +76,7 @@ function normalizePhone(v?: string | null): string {
 
 @Injectable()
 export class IntegrationsService {
+  private readonly logger = new Logger(IntegrationsService.name);
   private cachedBotUserId?: string;
 
   constructor(
@@ -145,6 +147,10 @@ export class IntegrationsService {
 
     const id = uuidv4();
 
+    // Persist the proof image (if the workflow sent one) so the submission
+    // previews like an app upload. Failure to store must not block ingestion.
+    const attachment = await this.storeIngestImage(id, dto);
+
     const submission = await this.prisma.$transaction(async (tx) => {
       const created = await tx.paymentSubmission.create({
         data: {
@@ -161,6 +167,9 @@ export class IntegrationsService {
           referenceNumber:
             dto.referenceNumber ?? dto.extraction.slipRef ?? null,
           notes: dto.messageText ?? null,
+          attachmentPath: attachment?.path ?? null,
+          attachmentOriginalName: attachment?.originalName ?? null,
+          attachmentMimeType: attachment?.mimeType ?? null,
           status: SubmissionStatus.SUBMITTED,
           enrichmentStatus: EnrichmentStatus.ENRICHED,
           version: 1,
@@ -259,6 +268,31 @@ export class IntegrationsService {
   }
 
   // --- helpers --------------------------------------------------------------
+
+  /**
+   * Decode and store a base64 proof image sent by the workflow. Returns the
+   * saved-file descriptor, or null when no image was sent or storage failed
+   * (image is optional — a storage error must not abort the submission).
+   */
+  private async storeIngestImage(submissionId: string, dto: IngestSubmissionDto) {
+    if (!dto.imageBase64) return null;
+    try {
+      const buffer = Buffer.from(dto.imageBase64, 'base64');
+      if (buffer.length === 0) return null;
+      const mimetype = dto.imageMime ?? 'image/jpeg';
+      const originalname = dto.imageName ?? 'whatsapp-proof.jpg';
+      // Synthesize the minimal Multer file shape StorageService.save reads.
+      const file = { buffer, mimetype, originalname } as Express.Multer.File;
+      return await this.storage.save(file, submissionId);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to store ingest image for ${submissionId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
+  }
 
   private extractionData(
     submissionId: string,

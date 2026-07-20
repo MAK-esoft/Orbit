@@ -257,10 +257,13 @@ nodes.push({
 });
 connect('Resolve WA Media', 'Download WA Media');
 
+// Encode the downloaded image to base64 in JSON. Emitting it as JSON (not
+// binary) means any downstream node can read it back by name — Build Payment/
+// Expense Body reference $('Encode Image') to attach it to the Orbit ingest,
+// since binary does not survive the OpenAI HTTP call.
 nodes.push({
   parameters: {
-    jsCode: `// Base64-encode the downloaded image and build an OpenAI vision request.
-const item = $input.first();
+    jsCode: `const item = $input.first();
 let mime = $node['Extract Fields'].json.media_mime || 'image/jpeg';
 let b64 = '';
 if (item.binary && item.binary.data) {
@@ -269,6 +272,22 @@ if (item.binary && item.binary.data) {
   b64 = buf.toString('base64');
 }
 if (!mime || mime.indexOf('image/') !== 0) mime = 'image/jpeg';
+const ext = mime.indexOf('png') !== -1 ? 'png' : (mime.indexOf('webp') !== -1 ? 'webp' : 'jpg');
+return [{ json: { imageB64: b64, imageMime: mime, imageName: 'whatsapp-proof.' + ext } }];`,
+  },
+  id: 'encode-image',
+  name: 'Encode Image',
+  type: 'n8n-nodes-base.code',
+  typeVersion: 2,
+  position: pos(6, Y_A + 60),
+});
+connect('Download WA Media', 'Encode Image');
+
+nodes.push({
+  parameters: {
+    jsCode: `// Build the OpenAI vision request from the base64 produced by Encode Image.
+const mime = $json.imageMime || 'image/jpeg';
+const b64 = $json.imageB64 || '';
 const caption = $node['Extract Fields'].json.message_text || '';
 
 const system = "You are a classifier for payment/expense PROOF images sent by Pakistani Regional Office accountants. Respond with ONLY valid JSON — no explanation, no markdown, no backticks. Just the raw JSON object.";
@@ -316,7 +335,7 @@ return [{ json: {
   typeVersion: 2,
   position: pos(7, Y_A - 60),
 });
-connect('Download WA Media', 'Build Vision Body');
+connect('Encode Image', 'Build Vision Body');
 
 nodes.push({
   parameters: {
@@ -511,6 +530,13 @@ nodes.push({
     jsCode: `const c = $node['Parse Classification'].json;
 const ef = $node['Extract Fields'].json;
 const amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;
+// Attach the proof image if the vision path ran (Encode Image only executes
+// on the image branch; referencing it on the text path throws — guard it).
+let img = {};
+try {
+  const e = $('Encode Image').first().json;
+  if (e && e.imageB64) img = { imageBase64: e.imageB64, imageMime: e.imageMime, imageName: e.imageName };
+} catch (err) {}
 return [{ json: {
   source: 'WHATSAPP',
   channelId: ef.group_id,
@@ -519,6 +545,7 @@ return [{ json: {
   workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,
   amount,
   referenceNumber: c.deposit_slip_ref || undefined,
+  ...img,
   extraction: {
     classification: 'payment_proof',
     extractedAmount: amount,
@@ -566,6 +593,11 @@ nodes.push({
     jsCode: `const c = $node['Parse Classification'].json;
 const ef = $node['Extract Fields'].json;
 const amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;
+let img = {};
+try {
+  const e = $('Encode Image').first().json;
+  if (e && e.imageB64) img = { imageBase64: e.imageB64, imageMime: e.imageMime, imageName: e.imageName };
+} catch (err) {}
 return [{ json: {
   source: 'WHATSAPP',
   channelId: ef.group_id,
@@ -573,6 +605,7 @@ return [{ json: {
   messageText: ef.message_text || undefined,
   workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,
   amount,
+  ...img,
   extraction: {
     classification: 'expense_proof',
     extractedAmount: amount,
