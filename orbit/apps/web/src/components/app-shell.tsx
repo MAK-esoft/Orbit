@@ -4,6 +4,7 @@ import {
   Bell,
   Building2,
   FilePlus2,
+  FileText,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -31,6 +32,7 @@ const ICONS = {
   ros: Building2,
   users: Users,
   ledger: Scale,
+  reports: FileText,
   notifications: Bell,
 };
 

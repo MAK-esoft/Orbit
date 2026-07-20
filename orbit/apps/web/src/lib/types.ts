@@ -19,6 +19,12 @@ export type SubmissionSource = 'APP' | 'WHATSAPP' | 'SLACK';
 
 export type EnrichmentStatus = 'NONE' | 'PENDING' | 'ENRICHED' | 'FAILED';
 
+/** A single dynamic field the AI read off a proof. */
+export interface ExtractedField {
+  label: string;
+  value: string;
+}
+
 /** AI-extracted data from the n8n workflow. Always shown as a separate block. */
 export interface SubmissionExtraction {
   classification: string;
@@ -32,6 +38,8 @@ export interface SubmissionExtraction {
   bankEmailTimestamp: string | null;
   confidence: string | null;
   model: string | null;
+  // Dynamic, proof-specific fields — render only what's present.
+  fields: ExtractedField[];
   createdAt: string;
 }
 
@@ -64,6 +72,7 @@ export interface RegionalOffice {
   code: string;
   city: string | null;
   region: string | null;
+  whatsappPhone?: string | null;
   isActive: boolean;
   userCount?: number;
 }

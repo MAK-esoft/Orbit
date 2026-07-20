@@ -4,8 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { AdminStats } from '@/lib/types';
-import { formatPkr } from '@/lib/format';
-import { BalanceSummary } from '@/components/balance-summary';
+import { formatDate } from '@/lib/format';
 import { PageHeader } from '@/components/page-header';
 import { SummaryCard } from '@/components/summary-card';
 import { SubmissionsTable } from '@/components/submissions-table';
@@ -42,11 +41,6 @@ export default function AdminDashboardPage() {
             />
           </div>
 
-          <BalanceSummary
-            balance={stats.balance}
-            title="This month — balance (all offices)"
-          />
-
           <div className="rounded-lg border border-border bg-surface">
             <div className="border-b border-border px-4 py-3">
               <h2 className="text-card-label text-text-primary">
@@ -70,43 +64,27 @@ export default function AdminDashboardPage() {
                   <tr>
                     <th className="px-4 py-2.5 text-left font-medium">Regional office</th>
                     <th className="px-4 py-2.5 text-right font-medium">Pending</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Credited</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Debited</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Net (this month)</th>
+                    <th className="px-4 py-2.5 text-right font-medium">Last activity</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.perRo.map((ro) => {
-                    const net = Number(ro.net);
-                    return (
-                      <tr
-                        key={ro.roId}
-                        onClick={() => router.push(`/admin/submissions?roId=${ro.roId}`)}
-                        className="cursor-pointer border-b border-border last:border-0 hover:bg-primary-light"
-                        title="View this office's requests"
-                      >
-                        <td className="px-4 py-3 font-medium text-text-primary">
-                          {ro.name}
-                          <span className="ml-2 text-meta text-text-secondary">{ro.code}</span>
-                        </td>
-                        <td className="px-4 py-3 text-right text-text-secondary">{ro.pending}</td>
-                        <td className="px-4 py-3 text-right text-status-approved">
-                          {formatPkr(ro.credited)}
-                        </td>
-                        <td className="px-4 py-3 text-right text-status-rejected">
-                          {formatPkr(ro.debited)}
-                        </td>
-                        <td
-                          className={`px-4 py-3 text-right font-medium ${
-                            net < 0 ? 'text-status-rejected' : 'text-text-primary'
-                          }`}
-                        >
-                          {net < 0 ? '−' : ''}
-                          {formatPkr(Math.abs(net))}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {stats.perRo.map((ro) => (
+                    <tr
+                      key={ro.roId}
+                      onClick={() => router.push(`/admin/submissions?roId=${ro.roId}`)}
+                      className="cursor-pointer border-b border-border last:border-0 hover:bg-primary-light"
+                      title="View this office's requests"
+                    >
+                      <td className="px-4 py-3 font-medium text-text-primary">
+                        {ro.name}
+                        <span className="ml-2 text-meta text-text-secondary">{ro.code}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-text-secondary">{ro.pending}</td>
+                      <td className="px-4 py-3 text-right text-text-secondary">
+                        {ro.lastSubmissionAt ? formatDate(ro.lastSubmissionAt) : '—'}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

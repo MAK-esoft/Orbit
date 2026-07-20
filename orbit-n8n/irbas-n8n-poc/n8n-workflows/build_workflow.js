@@ -133,11 +133,13 @@ if (isSlack) {
     }
   }
 } else {
-  // WhatsApp: enforce ?token only when the inbound webhook supplied a query string.
+  // WhatsApp: only validate ?token when one is actually supplied. Meta's real
+  // POST callbacks carry no query params, so an absent token must NOT be rejected
+  // (the mock scripts still send ?token= and are validated against it).
   const expected = $env.WHATSAPP_VERIFY_TOKEN;
   const provided = (incoming && incoming.query) ? incoming.query.token : undefined;
-  if (expected && String(expected).length > 0 && incoming && incoming.query && provided !== expected) {
-    throw new Error('Unauthorized: invalid or missing ?token query parameter');
+  if (expected && provided !== undefined && provided !== expected) {
+    throw new Error('Unauthorized: invalid ?token query parameter');
   }
   const entry  = root && root.entry ? root.entry[0] : undefined;
   const change = entry && entry.changes ? entry.changes[0] : undefined;
@@ -148,6 +150,15 @@ if (isSlack) {
   sender_phone = msg && msg.from ? msg.from : '';
   media_id = (msg && msg.image && msg.image.id) ? msg.image.id
            : (msg && msg.document && msg.document.id) ? msg.document.id : '';
+  // Media messages carry no text.body — use the caption as the message text —
+  // and expose the mime type so the vision path can build the data URL.
+  if (msg && msg.image) {
+    media_mime = msg.image.mime_type || '';
+    if (!message_text && msg.image.caption) message_text = msg.image.caption;
+  } else if (msg && msg.document) {
+    media_mime = msg.document.mime_type || '';
+    if (!message_text && msg.document.caption) message_text = msg.document.caption;
+  }
 }
 
 return [{
@@ -268,8 +279,11 @@ const user = [
   '  "amount_pkr": <number or null>,',
   '  "payment_method": "bank_transfer" | "cash_deposit" | "unknown" | null,',
   '  "deposit_slip_ref": "<string or null>",',
-  '  "description": "<one line summary in English>"',
+  '  "description": "<one line summary in English>",',
+  '  "fields": [ { "label": "<Title Case>", "value": "<text>" } ]',
   '}',
+  '',
+  'For "fields": include each concrete detail actually present in the message as a {label, value} pair (Amount, Bank, Reference, Beneficiary, Date, etc.). OMIT anything not stated; never invent.',
   '',
   'Classification rules:',
   '- payment_proof: message mentions payment, transfer, deposit, amount sent to IRBAS account',
@@ -308,7 +322,10 @@ nodes.push({
       conditions: [
         {
           id: 'has-media',
-          leftValue: "={{ $node['Extract Fields'].json.media_url }}",
+          // Slack provides a direct media_url; WhatsApp provides only a media_id
+          // (resolved to a URL later). Either one routes to the vision path.
+          leftValue:
+            "={{ $node['Extract Fields'].json.media_url || $node['Extract Fields'].json.media_id }}",
           rightValue: '',
           operator: { type: 'string', operation: 'notEmpty', singleValue: true },
         },
@@ -345,9 +362,80 @@ nodes.push({
   name: 'Download Image',
   type: 'n8n-nodes-base.httpRequest',
   typeVersion: 4.2,
+  position: pos(6, Y_A - 160),
+});
+
+// ------------------------------------------------------------
+// Image proof -> split by source. WhatsApp gives only a media ID
+// (resolve -> download with the Meta token); Slack gives a direct URL.
+// ------------------------------------------------------------
+nodes.push({
+  parameters: {
+    conditions: {
+      options: { caseSensitive: true, leftValue: '', typeValidation: 'loose', version: 2 },
+      conditions: [
+        {
+          id: 'is-whatsapp',
+          leftValue: "={{ $node['Extract Fields'].json.source }}",
+          rightValue: 'whatsapp',
+          operator: { type: 'string', operation: 'equals', name: 'filter.operator.equals' },
+        },
+      ],
+      combinator: 'and',
+    },
+    options: {},
+  },
+  id: 'is-whatsapp',
+  name: 'Is WhatsApp?',
+  type: 'n8n-nodes-base.if',
+  typeVersion: 2,
   position: pos(5, Y_A - 60),
 });
-connect('Has Image Proof', 'Download Image', 0); // true (has image)
+connect('Has Image Proof', 'Is WhatsApp?', 0); // true (has image) -> split by source
+connect('Is WhatsApp?', 'Download Image', 1);  // false (Slack) -> direct URL download
+
+// WhatsApp media: GET graph.facebook.com/v21.0/{media_id} -> { url, mime_type }
+nodes.push({
+  parameters: {
+    method: 'GET',
+    url: "=https://graph.facebook.com/v21.0/{{ $node['Extract Fields'].json.media_id }}",
+    sendHeaders: true,
+    headerParameters: {
+      parameters: [
+        { name: 'Authorization', value: '=Bearer ' + '{{ $env.WHATSAPP_API_TOKEN }}' },
+      ],
+    },
+    options: {},
+  },
+  id: 'resolve-wa-media',
+  name: 'Resolve WA Media',
+  type: 'n8n-nodes-base.httpRequest',
+  typeVersion: 4.2,
+  position: pos(6, Y_A - 60),
+});
+connect('Is WhatsApp?', 'Resolve WA Media', 0); // true (WhatsApp)
+
+// Download the resolved (short-lived) media URL with the same Meta token.
+nodes.push({
+  parameters: {
+    method: 'GET',
+    url: "={{ $node['Resolve WA Media'].json.url }}",
+    sendHeaders: true,
+    headerParameters: {
+      parameters: [
+        { name: 'Authorization', value: '=Bearer ' + '{{ $env.WHATSAPP_API_TOKEN }}' },
+      ],
+    },
+    options: { response: { response: { responseFormat: 'file', outputPropertyName: 'data' } } },
+  },
+  id: 'download-wa-media',
+  name: 'Download WA Media',
+  type: 'n8n-nodes-base.httpRequest',
+  typeVersion: 4.2,
+  position: pos(7, Y_A - 60),
+});
+connect('Resolve WA Media', 'Download WA Media');
+connect('Download WA Media', 'Build Vision Body'); // converges with the Slack path
 
 nodes.push({
   parameters: {
@@ -377,8 +465,11 @@ const user = [
   '  "amount_pkr": <number or null>,',
   '  "payment_method": "bank_transfer" | "cash_deposit" | "card" | "unknown" | null,',
   '  "deposit_slip_ref": "<transaction id / reference / slip number, or null>",',
-  '  "description": "<one line: merchant or purpose + key details>"',
+  '  "description": "<one line: merchant or purpose + key details>",',
+  '  "fields": [ { "label": "<Title Case label>", "value": "<text as printed>" } ]',
   '}',
+  '',
+  'For "fields": include EVERY distinct piece of information actually visible on the document as a {label, value} pair — e.g. Amount, Account Title, Account Number, IBAN, Bank, Branch, Beneficiary Name, Sender Name, Date, Time, Transaction ID, Reference, Channel, Status, Card. ONLY include a field whose value is present; OMIT anything not shown. Never invent values.',
   '',
   'Classification (be generous — extract first, classify second):',
   '- payment_proof: a deposit, bank transfer, or payment showing money sent or received.',
@@ -493,12 +584,19 @@ if (typeof amt === 'string') { const n = parseFloat(amt.replace(/,/g, '')); amt 
 
 console.log('Classification:', parsed.classification, '| amount:', amt, '| slip:', parsed.deposit_slip_ref);
 
+const fields = Array.isArray(parsed.fields)
+  ? parsed.fields
+      .filter(f => f && f.label != null && f.value != null && String(f.value).trim() !== '')
+      .map(f => ({ label: String(f.label), value: String(f.value) }))
+  : [];
+
 return [{ json: {
   classification: parsed.classification,
   amount_pkr: amt,
   payment_method: parsed.payment_method != null ? parsed.payment_method : null,
   deposit_slip_ref: parsed.deposit_slip_ref != null ? parsed.deposit_slip_ref : null,
-  description: parsed.description != null ? parsed.description : ''
+  description: parsed.description != null ? parsed.description : '',
+  fields
 } }];`,
   },
   id: 'parse-classification',
@@ -658,10 +756,11 @@ return [{ json: {
     extractedPaymentMethod: c.payment_method || undefined,
     slipRef: c.deposit_slip_ref || undefined,
     description: c.description || undefined,
+    fields: Array.isArray(c.fields) ? c.fields : [],
     bankEmailMatch: !!m.matched,
     bankEmailAmount: (m.bank_amount != null) ? String(m.bank_amount) : undefined,
     bankEmailTimestamp: m.bank_timestamp || undefined,
-    model: ef.media_url ? 'gpt-4o' : 'llama-3.1-8b-instant',
+    model: (ef.media_url || ef.media_id) ? 'gpt-4o' : 'llama-3.1-8b-instant',
     rawResponse: c
   }
 } }];`,
@@ -715,7 +814,8 @@ return [{ json: {
     extractedPaymentMethod: c.payment_method || undefined,
     slipRef: c.deposit_slip_ref || undefined,
     description: c.description || undefined,
-    model: ef.media_url ? 'gpt-4o' : 'llama-3.1-8b-instant',
+    fields: Array.isArray(c.fields) ? c.fields : [],
+    model: (ef.media_url || ef.media_id) ? 'gpt-4o' : 'llama-3.1-8b-instant',
     rawResponse: c
   }
 } }];`,
@@ -872,8 +972,15 @@ const system = "You are a classifier for payment/expense PROOF images. Respond w
 const user = [
   'This image is a financial document (deposit slip, transfer/payment screenshot, cheque, or receipt).',
   caption ? ('Caption: "' + caption + '"') : 'No caption.',
-  'Read ALL text, then extract and classify. Respond ONLY with this JSON:',
-  '{ "classification": "payment_proof" | "expense_proof" | "unrecognised", "amount_pkr": <number or null>, "payment_method": "bank_transfer" | "cash_deposit" | "card" | "unknown" | null, "deposit_slip_ref": "<string or null>", "description": "<one line>" }'
+  'Read ALL text on it. Respond ONLY with this JSON (no markdown):',
+  '{',
+  '  "classification": "payment_proof" | "expense_proof" | "unrecognised",',
+  '  "amount_pkr": <number or null>,',
+  '  "payment_method": "bank_transfer" | "cash_deposit" | "card" | "unknown" | null,',
+  '  "deposit_slip_ref": "<string or null>",',
+  '  "fields": [ { "label": "<Title Case label>", "value": "<text as printed>" } ]',
+  '}',
+  'For "fields": include EVERY distinct piece of information actually visible on the document, each as a {label, value} pair — e.g. Amount, Account Title, Account Number, IBAN, Bank, Branch, Beneficiary Name, Sender Name, Date, Time, Transaction ID, Reference, Channel, Status, Card. ONLY include a field whose value is actually present; OMIT anything not shown. Never invent or guess values.'
 ].join('\\n');
 return [{ json: {
   model: 'gpt-4o', temperature: 0, max_tokens: 400,
@@ -928,7 +1035,9 @@ const system = "You classify messages from Pakistani RO accountants. Respond wit
 const user = [
   'Classify the message and extract fields.',
   'Message: "' + text + '"',
-  'Respond ONLY with: { "classification": "payment_proof" | "expense_proof" | "unrecognised", "amount_pkr": <number or null>, "payment_method": "bank_transfer" | "cash_deposit" | "unknown" | null, "deposit_slip_ref": "<string or null>", "description": "<one line>" }'
+  'Respond ONLY with this JSON:',
+  '{ "classification": "payment_proof" | "expense_proof" | "unrecognised", "amount_pkr": <number or null>, "payment_method": "bank_transfer" | "cash_deposit" | "unknown" | null, "deposit_slip_ref": "<string or null>", "fields": [ { "label": "<Title Case>", "value": "<text>" } ] }',
+  'For "fields": include each concrete detail actually present in the message as a {label, value} pair (e.g. Amount, Bank, Reference, Beneficiary, Date). OMIT anything not stated; never invent values.'
 ].join('\\n');
 return [{ json: {
   model: 'llama-3.1-8b-instant', temperature: 0, max_tokens: 300,
@@ -982,6 +1091,11 @@ const allowed = ['payment_proof', 'expense_proof', 'unrecognised'];
 if (!allowed.includes(parsed.classification)) parsed.classification = 'unrecognised';
 let amt = parsed.amount_pkr;
 if (typeof amt === 'string') { const n = parseFloat(amt.replace(/,/g, '')); amt = isNaN(n) ? null : n; }
+const fields = Array.isArray(parsed.fields)
+  ? parsed.fields
+      .filter(f => f && f.label != null && f.value != null && String(f.value).trim() !== '')
+      .map(f => ({ label: String(f.label), value: String(f.value) }))
+  : [];
 const hasFile = $node['App Extract'].json.hasFile;
 return [{ json: {
   extraction: {
@@ -989,7 +1103,7 @@ return [{ json: {
     extractedAmount: (amt != null) ? String(amt) : undefined,
     extractedPaymentMethod: parsed.payment_method || undefined,
     slipRef: parsed.deposit_slip_ref || undefined,
-    description: parsed.description || undefined,
+    fields,
     model: hasFile ? 'gpt-4o' : 'llama-3.1-8b-instant',
     rawResponse: parsed
   }

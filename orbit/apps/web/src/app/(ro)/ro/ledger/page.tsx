@@ -7,10 +7,14 @@ export default function RoLedgerPage() {
   return (
     <div>
       <PageHeader
-        title="Ledger"
-        description="Your running statement with IRBAS — credits, debits and outstanding balance"
+        title="Reports"
+        description="Your statement with IRBAS — filter, sort, paginate and export to CSV"
       />
-      <LedgerView canManage={false} submissionBasePath="/ro/submissions" />
+      <LedgerView
+        canManage={false}
+        submissionBasePath="/ro/submissions"
+        storageKey="orbit.filters.roLedgerView"
+      />
     </div>
   );
 }

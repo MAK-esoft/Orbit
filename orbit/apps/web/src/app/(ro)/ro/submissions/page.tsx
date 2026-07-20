@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Download, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { PaginatedMeta, Submission, SubmissionStatus } from '@/lib/types';
+import { usePersistentState } from '@/lib/use-persistent-state';
 import { PageHeader } from '@/components/page-header';
 import { Pagination } from '@/components/pagination';
 import { SubmissionsTable } from '@/components/submissions-table';
@@ -20,19 +21,30 @@ const STATUSES: { value: SubmissionStatus | ''; label: string }[] = [
   { value: 'REJECTED', label: 'Rejected' },
 ];
 
+const DEFAULT_FILTERS = {
+  status: '',
+  type: '',
+  sortBy: 'createdAt',
+  sortDir: 'desc' as 'asc' | 'desc',
+};
+
 export default function RoSubmissionsPage() {
   const [rows, setRows] = useState<Submission[] | null>(null);
   const [meta, setMeta] = useState<PaginatedMeta | null>(null);
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState<string>('');
-  const [type, setType] = useState<string>('');
+  const [filters, setFilters, hydrated] = usePersistentState(
+    'orbit.filters.roRequests',
+    DEFAULT_FILTERS,
+  );
 
   const queryParams = useCallback(() => {
     const params = new URLSearchParams();
-    if (status) params.set('status', status);
-    if (type) params.set('paymentType', type);
+    if (filters.status) params.set('status', filters.status);
+    if (filters.type) params.set('paymentType', filters.type);
+    params.set('sortBy', filters.sortBy);
+    params.set('sortDir', filters.sortDir);
     return params;
-  }, [status, type]);
+  }, [filters]);
 
   const load = useCallback(async () => {
     setRows(null);
@@ -49,8 +61,22 @@ export default function RoSubmissionsPage() {
   }, [page, queryParams]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (hydrated) load();
+  }, [load, hydrated]);
+
+  function setFilter<K extends keyof typeof filters>(key: K, value: (typeof filters)[K]) {
+    setPage(1);
+    setFilters((f) => ({ ...f, [key]: value }));
+  }
+
+  function onSort(col: string) {
+    setPage(1);
+    setFilters((f) =>
+      f.sortBy === col
+        ? { ...f, sortDir: f.sortDir === 'asc' ? 'desc' : 'asc' }
+        : { ...f, sortBy: col, sortDir: 'desc' },
+    );
+  }
 
   function exportCsv() {
     window.open(`/api/submissions/export?${queryParams()}`, '_blank');
@@ -78,11 +104,8 @@ export default function RoSubmissionsPage() {
       <div className="mb-4 flex flex-wrap gap-3">
         <Select
           className="w-auto"
-          value={status}
-          onChange={(e) => {
-            setPage(1);
-            setStatus(e.target.value);
-          }}
+          value={filters.status}
+          onChange={(e) => setFilter('status', e.target.value)}
         >
           {STATUSES.map((s) => (
             <option key={s.value} value={s.value}>
@@ -92,11 +115,8 @@ export default function RoSubmissionsPage() {
         </Select>
         <Select
           className="w-auto"
-          value={type}
-          onChange={(e) => {
-            setPage(1);
-            setType(e.target.value);
-          }}
+          value={filters.type}
+          onChange={(e) => setFilter('type', e.target.value)}
         >
           <option value="">All types</option>
           <option value="BANK_TRANSFER">Bank Transfer</option>
@@ -116,7 +136,12 @@ export default function RoSubmissionsPage() {
           />
         ) : (
           <>
-            <SubmissionsTable rows={rows} basePath="/ro/submissions" />
+            <SubmissionsTable
+              rows={rows}
+              basePath="/ro/submissions"
+              sort={{ by: filters.sortBy, dir: filters.sortDir }}
+              onSort={onSort}
+            />
             {meta && <Pagination meta={meta} onPage={setPage} />}
           </>
         )}

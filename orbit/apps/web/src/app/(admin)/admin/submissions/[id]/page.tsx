@@ -68,6 +68,11 @@ export default function AdminSubmissionDetailPage() {
       <SubmissionDetailView
         submission={submission}
         history={history}
+        canEdit
+        onUpdated={(s) => {
+          setSubmission(s);
+          loadHistory();
+        }}
         actions={
           <AdminReviewActions
             submission={submission}

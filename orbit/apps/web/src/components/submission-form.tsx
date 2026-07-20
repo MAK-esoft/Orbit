@@ -3,7 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { api, ApiError } from '@/lib/api';
 import { Submission } from '@/lib/types';
@@ -13,6 +13,7 @@ import { FileDropzone } from '@/components/file-dropzone';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -151,7 +152,13 @@ export function SubmissionForm({
         </Field>
 
         <Field label="Payment date" required error={errors.paymentDate?.message}>
-          <Input type="date" max={today} {...register('paymentDate')} />
+          <Controller
+            control={control}
+            name="paymentDate"
+            render={({ field }) => (
+              <DatePicker value={field.value ?? ''} onChange={field.onChange} max={today} />
+            )}
+          />
         </Field>
 
         <Field label="Bank name" required error={errors.bankName?.message}>

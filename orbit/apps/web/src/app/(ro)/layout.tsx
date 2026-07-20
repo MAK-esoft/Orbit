@@ -5,7 +5,7 @@ const RO_NAV: NavItem[] = [
   { href: '/ro/dashboard', label: 'Dashboard', icon: 'dashboard' },
   { href: '/ro/submissions', label: 'Requests', icon: 'submissions' },
   { href: '/ro/submissions/new', label: 'New', icon: 'new' },
-  { href: '/ro/ledger', label: 'Ledger', icon: 'ledger' },
+  { href: '/ro/ledger', label: 'Reports', icon: 'reports' },
 ];
 
 export default function RoLayout({ children }: { children: React.ReactNode }) {

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { RegionalOffice } from '@/lib/types';
+import { usePersistentState } from '@/lib/use-persistent-state';
 import { LedgerView } from '@/components/ledger-view';
 import { PageHeader } from '@/components/page-header';
 import { Select } from '@/components/ui/select';
@@ -10,24 +11,31 @@ import { EmptyState } from '@/components/ui/states';
 
 export default function AdminLedgerPage() {
   const [ros, setRos] = useState<RegionalOffice[]>([]);
-  const [roId, setRoId] = useState<string>('');
+  // Selected office persists per-browser; a roId in the URL overrides it.
+  const [roId, setRoId, hydrated] = usePersistentState('orbit.filters.adminLedgerRoId', '');
+  const appliedUrl = useRef(false);
 
   useEffect(() => {
     api.get<RegionalOffice[]>('/regional-offices').then((list) => {
       setRos(list);
-      const fromUrl = new URLSearchParams(window.location.search).get('roId');
-      if (fromUrl) setRoId(fromUrl);
-      else if (list.length === 1) setRoId(list[0].id);
+      if (list.length === 1) setRoId(list[0].id);
     });
-  }, []);
+  }, [setRoId]);
+
+  useEffect(() => {
+    if (!hydrated || appliedUrl.current) return;
+    appliedUrl.current = true;
+    const fromUrl = new URLSearchParams(window.location.search).get('roId');
+    if (fromUrl) setRoId(fromUrl);
+  }, [hydrated, setRoId]);
 
   const selected = ros.find((r) => r.id === roId);
 
   return (
     <div>
       <PageHeader
-        title="Ledger"
-        description="Running statement per regional office — credits, debits and outstanding balance"
+        title="Reports"
+        description="Per-office ledger — filter, sort, paginate and export to CSV"
         action={
           <Select
             className="w-auto min-w-[200px]"
@@ -56,6 +64,7 @@ export default function AdminLedgerPage() {
             roId={roId}
             canManage
             submissionBasePath="/admin/submissions"
+            storageKey="orbit.filters.adminLedgerView"
           />
         </>
       ) : (

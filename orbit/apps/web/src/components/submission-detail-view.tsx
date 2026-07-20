@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { HistoryEvent, Submission } from '@/lib/types';
 import {
   formatDate,
@@ -11,16 +12,24 @@ import {
 } from '@/lib/format';
 import { ExtractedInformation } from '@/components/extracted-information';
 import { SourceBadge } from '@/components/source-badge';
+import { SubmissionEditForm } from '@/components/submission-edit-form';
 import { ImageViewer } from '@/components/image-viewer';
 import { StatusBadge } from '@/components/status-badge';
 import { StatusTimeline } from '@/components/status-timeline';
-import { Download, Sparkles } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { CopyButton } from '@/components/ui/copy-button';
+import { Download, Pencil, Sparkles } from 'lucide-react';
 
+/** Read-only field with a copy-to-clipboard affordance (when the value is text). */
 function Detail({ label, value }: { label: string; value: React.ReactNode }) {
+  const copy = typeof value === 'string' && value !== '—' ? value : undefined;
   return (
-    <div>
+    <div className="group">
       <p className="text-meta text-text-secondary">{label}</p>
-      <p className="mt-0.5 text-body text-text-primary">{value || '—'}</p>
+      <div className="mt-0.5 flex items-start gap-1.5">
+        <p className="break-words text-body text-text-primary">{value || '—'}</p>
+        {copy && copy.trim() !== '' && <CopyButton value={copy} className="mt-0.5" />}
+      </div>
     </div>
   );
 }
@@ -33,13 +42,21 @@ export function SubmissionDetailView({
   submission,
   history,
   actions,
+  canEdit = false,
+  onUpdated,
 }: {
   submission: Submission;
   history: HistoryEvent[];
   actions?: React.ReactNode;
+  /** Admin-only: enables inline editing of the request's information. */
+  canEdit?: boolean;
+  onUpdated?: (s: Submission) => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const attachment = submission.attachment;
   const isImage = attachment?.mimeType?.startsWith('image/');
+  const isFinalized = submission.status === 'APPROVED' || submission.status === 'REJECTED';
+  const showEdit = canEdit && !isFinalized;
   const rejection =
     submission.status === 'REJECTED'
       ? [...history].reverse().find((h) => h.toStatus === 'REJECTED' && h.submissionId === submission.id)
@@ -62,7 +79,16 @@ export function SubmissionDetailView({
                 {submission.senderRef ? ` (${submission.senderRef})` : ''}
               </p>
             </div>
-            {actions && <div className="flex items-center gap-2">{actions}</div>}
+            {(actions || (showEdit && !editing)) && (
+              <div className="flex items-center gap-2">
+                {showEdit && !editing && (
+                  <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+                    <Pencil className="h-4 w-4" /> Edit
+                  </Button>
+                )}
+                {!editing && actions}
+              </div>
+            )}
           </div>
 
           {submission.enrichmentStatus === 'PENDING' && (
@@ -84,23 +110,36 @@ export function SubmissionDetailView({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-            <Detail label="Request type" value={requestTypeLabel(submission.requestType)} />
-            <Detail label="Payment method" value={paymentTypeLabel(submission.paymentType)} />
-            {submission.paymentTypeNote && (
-              <Detail label="Method note" value={submission.paymentTypeNote} />
-            )}
-            <Detail label="Amount" value={formatPkr(submission.amount)} />
-            <Detail label="Payment date" value={formatDate(submission.paymentDate)} />
-            <Detail label="Bank" value={submission.bankName} />
-            <Detail label="Reference" value={submission.referenceNumber} />
-            <Detail label="Submitted on" value={formatDate(submission.createdAt)} />
-          </div>
+          {editing ? (
+            <SubmissionEditForm
+              submission={submission}
+              onCancel={() => setEditing(false)}
+              onSaved={(s) => {
+                setEditing(false);
+                onUpdated?.(s);
+              }}
+            />
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                <Detail label="Request type" value={requestTypeLabel(submission.requestType)} />
+                <Detail label="Payment method" value={paymentTypeLabel(submission.paymentType)} />
+                {submission.paymentTypeNote && (
+                  <Detail label="Method note" value={submission.paymentTypeNote} />
+                )}
+                <Detail label="Amount" value={formatPkr(submission.amount)} />
+                <Detail label="Payment date" value={formatDate(submission.paymentDate)} />
+                <Detail label="Bank" value={submission.bankName} />
+                <Detail label="Reference" value={submission.referenceNumber} />
+                <Detail label="Submitted on" value={formatDate(submission.createdAt)} />
+              </div>
 
-          {submission.notes && (
-            <div className="mt-4">
-              <Detail label="Notes" value={submission.notes} />
-            </div>
+              {submission.notes && (
+                <div className="mt-4">
+                  <Detail label="Notes" value={submission.notes} />
+                </div>
+              )}
+            </>
           )}
         </div>
 

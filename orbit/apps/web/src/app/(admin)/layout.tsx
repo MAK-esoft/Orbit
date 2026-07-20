@@ -4,7 +4,7 @@ import { NavItem } from '@/components/app-shell';
 const ADMIN_NAV: NavItem[] = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: 'dashboard' },
   { href: '/admin/submissions', label: 'Requests', icon: 'submissions' },
-  { href: '/admin/ledger', label: 'Ledger', icon: 'ledger' },
+  { href: '/admin/ledger', label: 'Reports', icon: 'reports' },
   { href: '/admin/regional-offices', label: 'Offices', icon: 'ros' },
   { href: '/admin/users', label: 'Users', icon: 'users' },
 ];

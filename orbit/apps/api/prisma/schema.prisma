@@ -86,6 +86,9 @@ model RegionalOffice {
   // WhatsApp group / Slack channel back to this office.
   whatsappGroupId String? @unique @map("whatsapp_group_id") @db.VarChar(255)
   slackChannelId  String? @unique @map("slack_channel_id") @db.VarChar(255)
+  // The RO's own WhatsApp sender number (digits). Inbound WhatsApp messages are
+  // routed to this office by matching the message sender against this value.
+  whatsappPhone   String? @unique @map("whatsapp_phone") @db.VarChar(32)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -191,6 +194,10 @@ model SubmissionExtraction {
   bankEmailTimestamp    DateTime? @map("bank_email_timestamp")
   confidence            String?  @db.VarChar(50)
   model                 String?  @db.VarChar(100) // AI model used (e.g. gpt-4o, llama-3.1-8b-instant)
+  // Dynamic, proof-specific extracted fields: ordered [{ label, value }] of
+  // whatever the AI actually found (account title, account number, beneficiary,
+  // date, etc.). Rendered as-is; absent fields are simply not present here.
+  fields                Json?
   rawResponse           Json     @map("raw_response")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")

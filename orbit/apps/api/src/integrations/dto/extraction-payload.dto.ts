@@ -1,11 +1,24 @@
+import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsNotEmpty,
   IsNumberString,
   IsObject,
   IsOptional,
   IsString,
+  ValidateNested,
 } from 'class-validator';
+
+/** A single dynamic field extracted from a proof (e.g. Account Title → ...). */
+export class ExtractedFieldDto {
+  @IsString()
+  @IsNotEmpty()
+  label: string;
+
+  @IsString()
+  value: string;
+}
 
 /**
  * AI-extracted data produced by the n8n workflow. Stored verbatim in
@@ -55,6 +68,13 @@ export class ExtractionPayloadDto {
   @IsOptional()
   @IsString()
   model?: string;
+
+  // Dynamic, proof-specific fields — only those actually present on the proof.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ExtractedFieldDto)
+  fields?: ExtractedFieldDto[];
 
   // Full raw AI response, kept for audit/debugging.
   @IsOptional()

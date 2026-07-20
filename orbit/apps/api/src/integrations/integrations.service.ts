@@ -68,6 +68,11 @@ function decimalOrNull(v?: string | null): Prisma.Decimal | null {
   return v === undefined || v === null || v === '' ? null : new Prisma.Decimal(v);
 }
 
+/** Strip everything but digits from a phone number (drops +, spaces, dashes). */
+function normalizePhone(v?: string | null): string {
+  return (v ?? '').replace(/\D/g, '');
+}
+
 @Injectable()
 export class IntegrationsService {
   private cachedBotUserId?: string;
@@ -274,6 +279,7 @@ export class IntegrationsService {
         : null,
       confidence: e.confidence ?? null,
       model: e.model ?? null,
+      fields: (e.fields ?? []) as unknown as Prisma.InputJsonValue,
       rawResponse: (e.rawResponse ?? {}) as Prisma.InputJsonValue,
     };
   }
@@ -287,6 +293,21 @@ export class IntegrationsService {
       if (!ro) throw new BadRequestException('Unknown roId');
       return ro;
     }
+
+    // WhatsApp routing is by the *sender's* phone number: Head Office has one
+    // business number, but each RO's own number is stored on the office and the
+    // message sender decides which RO the proof belongs to.
+    if (dto.source === SubmissionSource.WHATSAPP && dto.senderRef) {
+      const ro = await this.resolveRoBySenderPhone(dto.senderRef);
+      if (ro) return ro;
+      // fall through to channelId only if a channel was also supplied
+      if (!dto.channelId) {
+        throw new BadRequestException(
+          `No regional office mapped to WhatsApp sender "${dto.senderRef}"`,
+        );
+      }
+    }
+
     if (dto.channelId) {
       const ro = await this.prisma.regionalOffice.findFirst({
         where: {
@@ -304,7 +325,33 @@ export class IntegrationsService {
       }
       return ro;
     }
-    throw new BadRequestException('Either channelId or roId is required');
+    throw new BadRequestException('Either channelId, senderRef or roId is required');
+  }
+
+  /**
+   * Match a WhatsApp sender against each RO's stored `whatsappPhone`.
+   * Numbers are normalized to digits and compared exactly or by their last 10
+   * digits, so a local number (0301…) and its international form (9230…) both
+   * resolve to the same office.
+   */
+  private async resolveRoBySenderPhone(senderRef: string) {
+    const target = normalizePhone(senderRef);
+    if (!target) return null;
+    const targetTail = target.slice(-10);
+
+    const ros = await this.prisma.regionalOffice.findMany({
+      where: { whatsappPhone: { not: null } },
+      select: { id: true, name: true, isActive: true, whatsappPhone: true },
+    });
+
+    const match = ros.find((ro) => {
+      const stored = normalizePhone(ro.whatsappPhone);
+      if (!stored) return false;
+      return stored === target || stored.slice(-10) === targetTail;
+    });
+    return match
+      ? { id: match.id, name: match.name, isActive: match.isActive }
+      : null;
   }
 
   private async resolveBotUserId(): Promise<string> {

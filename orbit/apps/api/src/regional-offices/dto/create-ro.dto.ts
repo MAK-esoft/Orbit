@@ -21,4 +21,14 @@ export class CreateRegionalOfficeDto {
   @IsString()
   @Length(0, 100)
   region?: string;
+
+  // The RO's own WhatsApp number; inbound WhatsApp proofs from this sender are
+  // routed to this office. Digits, +, spaces and dashes allowed.
+  @IsOptional()
+  @IsString()
+  @Length(0, 32)
+  @Matches(/^[0-9+\-\s]*$/, {
+    message: 'WhatsApp number may contain digits, +, spaces and dashes only',
+  })
+  whatsappPhone?: string;
 }

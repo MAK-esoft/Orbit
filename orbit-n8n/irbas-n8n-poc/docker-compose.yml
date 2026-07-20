@@ -27,6 +27,9 @@ services:
       - INTEGRATION_API_KEY=${INTEGRATION_API_KEY}
       - IRBAS_BANK_EMAIL=${IRBAS_BANK_EMAIL}
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
+      # --- WhatsApp Cloud API (media download for image proofs) ---
+      - WHATSAPP_API_TOKEN=${WHATSAPP_API_TOKEN}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       # --- Allow workflows to read process env via $env in expressions ---
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false

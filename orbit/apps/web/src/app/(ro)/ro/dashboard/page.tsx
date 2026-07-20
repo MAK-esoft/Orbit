@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { RoStats } from '@/lib/types';
-import { BalanceSummary } from '@/components/balance-summary';
 import { PageHeader } from '@/components/page-header';
 import { SummaryCard } from '@/components/summary-card';
 import { SubmissionsTable } from '@/components/submissions-table';
@@ -42,10 +41,6 @@ export default function RoDashboardPage() {
             <SummaryCard label="Pending" value={stats.pending} accent="submitted" />
             <SummaryCard label="Approved" value={stats.approved} accent="approved" />
             <SummaryCard label="Rejected" value={stats.rejected} accent="rejected" />
-          </div>
-
-          <div className="mb-6">
-            <BalanceSummary balance={stats.balance} />
           </div>
 
           <div className="rounded-lg border border-border bg-surface">

@@ -52,7 +52,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Unified normalizer for BOTH triggers:\n//  - WhatsApp Cloud API webhook (and the mock scripts)\n//  - Slack (n8n Slack Trigger / Slack Events API)\n// Both triggers connect into this node; downstream stays unchanged.\nconst incoming = $input.first().json;\n\n// Unwrap the webhook wrapper (.body) and the mock double-wrap (.body.body).\nconst reqBody = (incoming && incoming.body) ? incoming.body : incoming;\nconst root = (reqBody && reqBody.body) ? reqBody.body : reqBody;\n\n// --- detect source shape ---\nconst isWhatsApp = !!(root && root.entry);\nconst slackEvent = (root && root.event) ? root.event\n                 : ((root && (root.type === 'message' || root.channel) && root.text !== undefined) ? root : null);\nconst isSlack = !isWhatsApp && !!slackEvent;\n\nlet sender_phone = '';\nlet group_id = '';\nlet message_text = '';\nlet media_id = '';\nlet media_url = '';   // downloadable URL (Slack url_private) — drives the image-proof path\nlet media_mime = '';\n\nif (isSlack) {\n  // Slack: channel stands in for the WhatsApp group; user id for the sender.\n  message_text = slackEvent.text || '';\n  group_id = slackEvent.channel || '';\n  sender_phone = slackEvent.user || slackEvent.bot_id || '';\n  const file = (slackEvent.files && slackEvent.files[0]) ? slackEvent.files[0] : null;\n  if (file) {\n    media_id = file.id || '';\n    media_mime = file.mimetype || '';\n    // Only treat IMAGES as proof to read (skip pdfs/other in this phase).\n    if (media_mime.indexOf('image/') === 0) {\n      media_url = file.url_private_download || file.url_private || '';\n    }\n  }\n} else {\n  // WhatsApp: enforce ?token only when the inbound webhook supplied a query string.\n  const expected = $env.WHATSAPP_VERIFY_TOKEN;\n  const provided = (incoming && incoming.query) ? incoming.query.token : undefined;\n  if (expected && String(expected).length > 0 && incoming && incoming.query && provided !== expected) {\n    throw new Error('Unauthorized: invalid or missing ?token query parameter');\n  }\n  const entry  = root && root.entry ? root.entry[0] : undefined;\n  const change = entry && entry.changes ? entry.changes[0] : undefined;\n  const value  = change ? change.value : undefined;\n  const msg    = value && value.messages ? value.messages[0] : undefined;\n  message_text = (msg && msg.text && msg.text.body) ? msg.text.body : '';\n  group_id = value && value.metadata ? value.metadata.display_phone_number : '';\n  sender_phone = msg && msg.from ? msg.from : '';\n  media_id = (msg && msg.image && msg.image.id) ? msg.image.id\n           : (msg && msg.document && msg.document.id) ? msg.document.id : '';\n}\n\nreturn [{\n  json: {\n    source: isSlack ? 'slack' : 'whatsapp',\n    sender_phone,\n    group_id,\n    message_text,\n    media_id,\n    media_url,\n    media_mime,\n    raw_payload_obj: reqBody || {},\n  },\n}];"
+        "jsCode": "// Unified normalizer for BOTH triggers:\n//  - WhatsApp Cloud API webhook (and the mock scripts)\n//  - Slack (n8n Slack Trigger / Slack Events API)\n// Both triggers connect into this node; downstream stays unchanged.\nconst incoming = $input.first().json;\n\n// Unwrap the webhook wrapper (.body) and the mock double-wrap (.body.body).\nconst reqBody = (incoming && incoming.body) ? incoming.body : incoming;\nconst root = (reqBody && reqBody.body) ? reqBody.body : reqBody;\n\n// --- detect source shape ---\nconst isWhatsApp = !!(root && root.entry);\nconst slackEvent = (root && root.event) ? root.event\n                 : ((root && (root.type === 'message' || root.channel) && root.text !== undefined) ? root : null);\nconst isSlack = !isWhatsApp && !!slackEvent;\n\nlet sender_phone = '';\nlet group_id = '';\nlet message_text = '';\nlet media_id = '';\nlet media_url = '';   // downloadable URL (Slack url_private) — drives the image-proof path\nlet media_mime = '';\n\nif (isSlack) {\n  // Slack: channel stands in for the WhatsApp group; user id for the sender.\n  message_text = slackEvent.text || '';\n  group_id = slackEvent.channel || '';\n  sender_phone = slackEvent.user || slackEvent.bot_id || '';\n  const file = (slackEvent.files && slackEvent.files[0]) ? slackEvent.files[0] : null;\n  if (file) {\n    media_id = file.id || '';\n    media_mime = file.mimetype || '';\n    // Only treat IMAGES as proof to read (skip pdfs/other in this phase).\n    if (media_mime.indexOf('image/') === 0) {\n      media_url = file.url_private_download || file.url_private || '';\n    }\n  }\n} else {\n  // WhatsApp: only validate ?token when one is actually supplied. Meta's real\n  // POST callbacks carry no query params, so an absent token must NOT be rejected\n  // (the mock scripts still send ?token= and are validated against it).\n  const expected = $env.WHATSAPP_VERIFY_TOKEN;\n  const provided = (incoming && incoming.query) ? incoming.query.token : undefined;\n  if (expected && provided !== undefined && provided !== expected) {\n    throw new Error('Unauthorized: invalid ?token query parameter');\n  }\n  const entry  = root && root.entry ? root.entry[0] : undefined;\n  const change = entry && entry.changes ? entry.changes[0] : undefined;\n  const value  = change ? change.value : undefined;\n  const msg    = value && value.messages ? value.messages[0] : undefined;\n  message_text = (msg && msg.text && msg.text.body) ? msg.text.body : '';\n  group_id = value && value.metadata ? value.metadata.display_phone_number : '';\n  sender_phone = msg && msg.from ? msg.from : '';\n  media_id = (msg && msg.image && msg.image.id) ? msg.image.id\n           : (msg && msg.document && msg.document.id) ? msg.document.id : '';\n  // Media messages carry no text.body — use the caption as the message text —\n  // and expose the mime type so the vision path can build the data URL.\n  if (msg && msg.image) {\n    media_mime = msg.image.mime_type || '';\n    if (!message_text && msg.image.caption) message_text = msg.image.caption;\n  } else if (msg && msg.document) {\n    media_mime = msg.document.mime_type || '';\n    if (!message_text && msg.document.caption) message_text = msg.document.caption;\n  }\n}\n\nreturn [{\n  json: {\n    source: isSlack ? 'slack' : 'whatsapp',\n    sender_phone,\n    group_id,\n    message_text,\n    media_id,\n    media_url,\n    media_mime,\n    raw_payload_obj: reqBody || {},\n  },\n}];"
       },
       "id": "extract-fields",
       "name": "Extract Fields",
@@ -135,7 +135,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const text = $node['Extract Fields'].json.message_text || '';\nconst hasImage = ($node['Extract Fields'].json.media_id || '') !== '';\n\nconst system = \"You are a classifier for messages sent by Pakistani Regional Office accountants in a WhatsApp business group. You must respond with ONLY valid JSON — no explanation, no markdown, no backticks. Just the raw JSON object.\";\n\nconst user = [\n  'Classify the following message into exactly one category and extract key fields.',\n  '',\n  'Message: \"' + text + '\"',\n  'Has image attached: ' + hasImage,\n  '',\n  'Respond with ONLY this JSON structure:',\n  '{',\n  '  \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\",',\n  '  \"amount_pkr\": <number or null>,',\n  '  \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"unknown\" | null,',\n  '  \"deposit_slip_ref\": \"<string or null>\",',\n  '  \"description\": \"<one line summary in English>\"',\n  '}',\n  '',\n  'Classification rules:',\n  '- payment_proof: message mentions payment, transfer, deposit, amount sent to IRBAS account',\n  '- expense_proof: message mentions expense, repair, purchase, bill, petrol, utility paid by the RO',\n  '- unrecognised: anything else (greetings, announcements, questions)',\n  '',\n  'Amount extraction rules:',\n  '- Pakistani formats: 450,000 or 4.5 lac or 4.5 lakh or 450000 are all valid numbers',\n  '- Extract deposit slip or reference numbers if mentioned (e.g. slip number 2024-1847)',\n  '- If no amount visible, return null'\n].join('\\n');\n\nreturn [{ json: {\n  model: 'llama-3.1-8b-instant',\n  temperature: 0,\n  max_tokens: 300,\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: user }\n  ]\n} }];"
+        "jsCode": "const text = $node['Extract Fields'].json.message_text || '';\nconst hasImage = ($node['Extract Fields'].json.media_id || '') !== '';\n\nconst system = \"You are a classifier for messages sent by Pakistani Regional Office accountants in a WhatsApp business group. You must respond with ONLY valid JSON — no explanation, no markdown, no backticks. Just the raw JSON object.\";\n\nconst user = [\n  'Classify the following message into exactly one category and extract key fields.',\n  '',\n  'Message: \"' + text + '\"',\n  'Has image attached: ' + hasImage,\n  '',\n  'Respond with ONLY this JSON structure:',\n  '{',\n  '  \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\",',\n  '  \"amount_pkr\": <number or null>,',\n  '  \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"unknown\" | null,',\n  '  \"deposit_slip_ref\": \"<string or null>\",',\n  '  \"description\": \"<one line summary in English>\",',\n  '  \"fields\": [ { \"label\": \"<Title Case>\", \"value\": \"<text>\" } ]',\n  '}',\n  '',\n  'For \"fields\": include each concrete detail actually present in the message as a {label, value} pair (Amount, Bank, Reference, Beneficiary, Date, etc.). OMIT anything not stated; never invent.',\n  '',\n  'Classification rules:',\n  '- payment_proof: message mentions payment, transfer, deposit, amount sent to IRBAS account',\n  '- expense_proof: message mentions expense, repair, purchase, bill, petrol, utility paid by the RO',\n  '- unrecognised: anything else (greetings, announcements, questions)',\n  '',\n  'Amount extraction rules:',\n  '- Pakistani formats: 450,000 or 4.5 lac or 4.5 lakh or 450000 are all valid numbers',\n  '- Extract deposit slip or reference numbers if mentioned (e.g. slip number 2024-1847)',\n  '- If no amount visible, return null'\n].join('\\n');\n\nreturn [{ json: {\n  model: 'llama-3.1-8b-instant',\n  temperature: 0,\n  max_tokens: 300,\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: user }\n  ]\n} }];"
       },
       "id": "build-groq",
       "name": "Build Groq Body",
@@ -158,7 +158,7 @@
           "conditions": [
             {
               "id": "has-media",
-              "leftValue": "={{ $node['Extract Fields'].json.media_url }}",
+              "leftValue": "={{ $node['Extract Fields'].json.media_url || $node['Extract Fields'].json.media_id }}",
               "rightValue": "",
               "operator": {
                 "type": "string",
@@ -207,13 +207,102 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
+        1940,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-whatsapp",
+              "leftValue": "={{ $node['Extract Fields'].json.source }}",
+              "rightValue": "whatsapp",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-whatsapp",
+      "name": "Is WhatsApp?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
         1660,
         60
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Base64-encode the downloaded image and build a Groq vision request.\n// Use the binary-data helper so it works whether n8n stored the bytes in\n// memory or on the filesystem (binary.data.data is a pointer in fs mode).\nconst item = $input.first();\nlet mime = $node['Extract Fields'].json.media_mime || 'image/jpeg';\nlet b64 = '';\nif (item.binary && item.binary.data) {\n  if (item.binary.data.mimeType) mime = item.binary.data.mimeType;\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  b64 = buf.toString('base64');\n}\nif (!mime || mime.indexOf('image/') !== 0) mime = 'image/jpeg';\nconst caption = $node['Extract Fields'].json.message_text || '';\n\nconst system = \"You are a classifier for payment/expense PROOF images sent by Pakistani Regional Office accountants. Respond with ONLY valid JSON — no explanation, no markdown, no backticks. Just the raw JSON object.\";\n\nconst user = [\n  'This image is a financial document sent by an accountant — usually a bank deposit slip, a bank transfer/payment screenshot, a cheque, or a purchase/transaction receipt.',\n  caption ? ('Caption sent with the image: \"' + caption + '\"') : 'No caption was sent with the image.',\n  '',\n  'Read ALL text in the image, then extract the fields and classify. ALWAYS extract whatever is visible — do not return nulls if the value is present in the image. Respond with ONLY this JSON structure:',\n  '{',\n  '  \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\",',\n  '  \"amount_pkr\": <number or null>,',\n  '  \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"card\" | \"unknown\" | null,',\n  '  \"deposit_slip_ref\": \"<transaction id / reference / slip number, or null>\",',\n  '  \"description\": \"<one line: merchant or purpose + key details>\"',\n  '}',\n  '',\n  'Classification (be generous — extract first, classify second):',\n  '- payment_proof: a deposit, bank transfer, or payment showing money sent or received.',\n  '- expense_proof: a purchase, card transaction, bill, or any receipt for money spent.',\n  '- unrecognised: ONLY when the image contains no financial transaction at all (e.g. a photo, a meme, plain text with no amounts).',\n  '',\n  'Amount: use the MAIN total. If a PKR / Rs amount is shown, use that; otherwise use the largest amount on the receipt. Strip commas and currency symbols: \"Rs. 1,317.55\" -> 1317.55, \"450,000\" -> 450000.',\n  'deposit_slip_ref: capture any Transaction ID / reference / slip / cheque number printed on it (e.g. \"027400\").',\n  'description: include the merchant/purpose and a couple of identifying details (card last 4, date) when present.'\n].join('\\n');\n\nreturn [{ json: {\n  model: 'gpt-4o',\n  temperature: 0,\n  max_tokens: 400,\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: [\n      { type: 'text', text: user },\n      { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + b64 } }\n    ] }\n  ]\n} }];"
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v21.0/{{ $node['Extract Fields'].json.media_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.WHATSAPP_API_TOKEN }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "resolve-wa-media",
+      "name": "Resolve WA Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $node['Resolve WA Media'].json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.WHATSAPP_API_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "download-wa-media",
+      "name": "Download WA Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Base64-encode the downloaded image and build a Groq vision request.\n// Use the binary-data helper so it works whether n8n stored the bytes in\n// memory or on the filesystem (binary.data.data is a pointer in fs mode).\nconst item = $input.first();\nlet mime = $node['Extract Fields'].json.media_mime || 'image/jpeg';\nlet b64 = '';\nif (item.binary && item.binary.data) {\n  if (item.binary.data.mimeType) mime = item.binary.data.mimeType;\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  b64 = buf.toString('base64');\n}\nif (!mime || mime.indexOf('image/') !== 0) mime = 'image/jpeg';\nconst caption = $node['Extract Fields'].json.message_text || '';\n\nconst system = \"You are a classifier for payment/expense PROOF images sent by Pakistani Regional Office accountants. Respond with ONLY valid JSON — no explanation, no markdown, no backticks. Just the raw JSON object.\";\n\nconst user = [\n  'This image is a financial document sent by an accountant — usually a bank deposit slip, a bank transfer/payment screenshot, a cheque, or a purchase/transaction receipt.',\n  caption ? ('Caption sent with the image: \"' + caption + '\"') : 'No caption was sent with the image.',\n  '',\n  'Read ALL text in the image, then extract the fields and classify. ALWAYS extract whatever is visible — do not return nulls if the value is present in the image. Respond with ONLY this JSON structure:',\n  '{',\n  '  \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\",',\n  '  \"amount_pkr\": <number or null>,',\n  '  \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"card\" | \"unknown\" | null,',\n  '  \"deposit_slip_ref\": \"<transaction id / reference / slip number, or null>\",',\n  '  \"description\": \"<one line: merchant or purpose + key details>\",',\n  '  \"fields\": [ { \"label\": \"<Title Case label>\", \"value\": \"<text as printed>\" } ]',\n  '}',\n  '',\n  'For \"fields\": include EVERY distinct piece of information actually visible on the document as a {label, value} pair — e.g. Amount, Account Title, Account Number, IBAN, Bank, Branch, Beneficiary Name, Sender Name, Date, Time, Transaction ID, Reference, Channel, Status, Card. ONLY include a field whose value is present; OMIT anything not shown. Never invent values.',\n  '',\n  'Classification (be generous — extract first, classify second):',\n  '- payment_proof: a deposit, bank transfer, or payment showing money sent or received.',\n  '- expense_proof: a purchase, card transaction, bill, or any receipt for money spent.',\n  '- unrecognised: ONLY when the image contains no financial transaction at all (e.g. a photo, a meme, plain text with no amounts).',\n  '',\n  'Amount: use the MAIN total. If a PKR / Rs amount is shown, use that; otherwise use the largest amount on the receipt. Strip commas and currency symbols: \"Rs. 1,317.55\" -> 1317.55, \"450,000\" -> 450000.',\n  'deposit_slip_ref: capture any Transaction ID / reference / slip / cheque number printed on it (e.g. \"027400\").',\n  'description: include the merchant/purpose and a couple of identifying details (card last 4, date) when present.'\n].join('\\n');\n\nreturn [{ json: {\n  model: 'gpt-4o',\n  temperature: 0,\n  max_tokens: 400,\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: [\n      { type: 'text', text: user },\n      { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + b64 } }\n    ] }\n  ]\n} }];"
       },
       "id": "build-vision",
       "name": "Build Vision Body",
@@ -290,7 +379,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const resp = $input.first().json;\nlet content = '';\ntry { content = resp && resp.choices && resp.choices[0] && resp.choices[0].message ? resp.choices[0].message.content : ''; }\ncatch (e) { content = ''; }\n\nlet parsed;\ntry {\n  const cleaned = String(content).replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  console.log('Groq classification parse FAILED, defaulting to unrecognised. Raw content:', content);\n  parsed = { classification: 'unrecognised', amount_pkr: null, payment_method: null, deposit_slip_ref: null, description: 'Could not parse AI response' };\n}\n\nconst allowed = ['payment_proof', 'expense_proof', 'unrecognised'];\nif (!allowed.includes(parsed.classification)) parsed.classification = 'unrecognised';\n\nlet amt = parsed.amount_pkr;\nif (amt === undefined) amt = null;\nif (typeof amt === 'string') { const n = parseFloat(amt.replace(/,/g, '')); amt = isNaN(n) ? null : n; }\n\nconsole.log('Classification:', parsed.classification, '| amount:', amt, '| slip:', parsed.deposit_slip_ref);\n\nreturn [{ json: {\n  classification: parsed.classification,\n  amount_pkr: amt,\n  payment_method: parsed.payment_method != null ? parsed.payment_method : null,\n  deposit_slip_ref: parsed.deposit_slip_ref != null ? parsed.deposit_slip_ref : null,\n  description: parsed.description != null ? parsed.description : ''\n} }];"
+        "jsCode": "const resp = $input.first().json;\nlet content = '';\ntry { content = resp && resp.choices && resp.choices[0] && resp.choices[0].message ? resp.choices[0].message.content : ''; }\ncatch (e) { content = ''; }\n\nlet parsed;\ntry {\n  const cleaned = String(content).replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  console.log('Groq classification parse FAILED, defaulting to unrecognised. Raw content:', content);\n  parsed = { classification: 'unrecognised', amount_pkr: null, payment_method: null, deposit_slip_ref: null, description: 'Could not parse AI response' };\n}\n\nconst allowed = ['payment_proof', 'expense_proof', 'unrecognised'];\nif (!allowed.includes(parsed.classification)) parsed.classification = 'unrecognised';\n\nlet amt = parsed.amount_pkr;\nif (amt === undefined) amt = null;\nif (typeof amt === 'string') { const n = parseFloat(amt.replace(/,/g, '')); amt = isNaN(n) ? null : n; }\n\nconsole.log('Classification:', parsed.classification, '| amount:', amt, '| slip:', parsed.deposit_slip_ref);\n\nconst fields = Array.isArray(parsed.fields)\n  ? parsed.fields\n      .filter(f => f && f.label != null && f.value != null && String(f.value).trim() !== '')\n      .map(f => ({ label: String(f.label), value: String(f.value) }))\n  : [];\n\nreturn [{ json: {\n  classification: parsed.classification,\n  amount_pkr: amt,\n  payment_method: parsed.payment_method != null ? parsed.payment_method : null,\n  deposit_slip_ref: parsed.deposit_slip_ref != null ? parsed.deposit_slip_ref : null,\n  description: parsed.description != null ? parsed.description : '',\n  fields\n} }];"
       },
       "id": "parse-classification",
       "name": "Parse Classification",
@@ -435,7 +524,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const m = $node['Match Email to Payment'].json;\nconst c = $node['Parse Classification'].json;\nconst ef = $node['Extract Fields'].json;\nconst amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;\nreturn [{ json: {\n  source: (ef.source === 'slack') ? 'SLACK' : 'WHATSAPP',\n  channelId: ef.group_id,\n  senderRef: ef.sender_phone || undefined,\n  messageText: ef.message_text || undefined,\n  workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,\n  amount,\n  referenceNumber: c.deposit_slip_ref || undefined,\n  extraction: {\n    classification: 'payment_proof',\n    extractedAmount: amount,\n    extractedPaymentMethod: c.payment_method || undefined,\n    slipRef: c.deposit_slip_ref || undefined,\n    description: c.description || undefined,\n    bankEmailMatch: !!m.matched,\n    bankEmailAmount: (m.bank_amount != null) ? String(m.bank_amount) : undefined,\n    bankEmailTimestamp: m.bank_timestamp || undefined,\n    model: ef.media_url ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: c\n  }\n} }];"
+        "jsCode": "const m = $node['Match Email to Payment'].json;\nconst c = $node['Parse Classification'].json;\nconst ef = $node['Extract Fields'].json;\nconst amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;\nreturn [{ json: {\n  source: (ef.source === 'slack') ? 'SLACK' : 'WHATSAPP',\n  channelId: ef.group_id,\n  senderRef: ef.sender_phone || undefined,\n  messageText: ef.message_text || undefined,\n  workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,\n  amount,\n  referenceNumber: c.deposit_slip_ref || undefined,\n  extraction: {\n    classification: 'payment_proof',\n    extractedAmount: amount,\n    extractedPaymentMethod: c.payment_method || undefined,\n    slipRef: c.deposit_slip_ref || undefined,\n    description: c.description || undefined,\n    fields: Array.isArray(c.fields) ? c.fields : [],\n    bankEmailMatch: !!m.matched,\n    bankEmailAmount: (m.bank_amount != null) ? String(m.bank_amount) : undefined,\n    bankEmailTimestamp: m.bank_timestamp || undefined,\n    model: (ef.media_url || ef.media_id) ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: c\n  }\n} }];"
       },
       "id": "build-payment-body",
       "name": "Build Payment Body",
@@ -480,7 +569,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const c = $node['Parse Classification'].json;\nconst ef = $node['Extract Fields'].json;\nconst amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;\nreturn [{ json: {\n  source: (ef.source === 'slack') ? 'SLACK' : 'WHATSAPP',\n  channelId: ef.group_id,\n  senderRef: ef.sender_phone || undefined,\n  messageText: ef.message_text || undefined,\n  workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,\n  amount,\n  extraction: {\n    classification: 'expense_proof',\n    extractedAmount: amount,\n    extractedPaymentMethod: c.payment_method || undefined,\n    slipRef: c.deposit_slip_ref || undefined,\n    description: c.description || undefined,\n    model: ef.media_url ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: c\n  }\n} }];"
+        "jsCode": "const c = $node['Parse Classification'].json;\nconst ef = $node['Extract Fields'].json;\nconst amount = (c.amount_pkr != null) ? String(c.amount_pkr) : undefined;\nreturn [{ json: {\n  source: (ef.source === 'slack') ? 'SLACK' : 'WHATSAPP',\n  channelId: ef.group_id,\n  senderRef: ef.sender_phone || undefined,\n  messageText: ef.message_text || undefined,\n  workflowMessageId: $node['Capture Message Id'].json.workflow_message_id || undefined,\n  amount,\n  extraction: {\n    classification: 'expense_proof',\n    extractedAmount: amount,\n    extractedPaymentMethod: c.payment_method || undefined,\n    slipRef: c.deposit_slip_ref || undefined,\n    description: c.description || undefined,\n    fields: Array.isArray(c.fields) ? c.fields : [],\n    model: (ef.media_url || ef.media_id) ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: c\n  }\n} }];"
       },
       "id": "build-expense-body",
       "name": "Build Expense Body",
@@ -656,7 +745,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first();\nlet mime = 'image/jpeg';\nlet b64 = '';\nif (item.binary && item.binary.data) {\n  if (item.binary.data.mimeType) mime = item.binary.data.mimeType;\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  b64 = buf.toString('base64');\n}\nif (!mime || mime.indexOf('image/') !== 0) mime = 'image/jpeg';\nconst caption = $node['App Extract'].json.messageText || '';\nconst system = \"You are a classifier for payment/expense PROOF images. Respond with ONLY valid JSON — no markdown, no backticks.\";\nconst user = [\n  'This image is a financial document (deposit slip, transfer/payment screenshot, cheque, or receipt).',\n  caption ? ('Caption: \"' + caption + '\"') : 'No caption.',\n  'Read ALL text, then extract and classify. Respond ONLY with this JSON:',\n  '{ \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\", \"amount_pkr\": <number or null>, \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"card\" | \"unknown\" | null, \"deposit_slip_ref\": \"<string or null>\", \"description\": \"<one line>\" }'\n].join('\\n');\nreturn [{ json: {\n  model: 'gpt-4o', temperature: 0, max_tokens: 400,\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: [\n      { type: 'text', text: user },\n      { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + b64 } }\n    ] }\n  ]\n} }];"
+        "jsCode": "const item = $input.first();\nlet mime = 'image/jpeg';\nlet b64 = '';\nif (item.binary && item.binary.data) {\n  if (item.binary.data.mimeType) mime = item.binary.data.mimeType;\n  const buf = await this.helpers.getBinaryDataBuffer(0, 'data');\n  b64 = buf.toString('base64');\n}\nif (!mime || mime.indexOf('image/') !== 0) mime = 'image/jpeg';\nconst caption = $node['App Extract'].json.messageText || '';\nconst system = \"You are a classifier for payment/expense PROOF images. Respond with ONLY valid JSON — no markdown, no backticks.\";\nconst user = [\n  'This image is a financial document (deposit slip, transfer/payment screenshot, cheque, or receipt).',\n  caption ? ('Caption: \"' + caption + '\"') : 'No caption.',\n  'Read ALL text on it. Respond ONLY with this JSON (no markdown):',\n  '{',\n  '  \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\",',\n  '  \"amount_pkr\": <number or null>,',\n  '  \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"card\" | \"unknown\" | null,',\n  '  \"deposit_slip_ref\": \"<string or null>\",',\n  '  \"fields\": [ { \"label\": \"<Title Case label>\", \"value\": \"<text as printed>\" } ]',\n  '}',\n  'For \"fields\": include EVERY distinct piece of information actually visible on the document, each as a {label, value} pair — e.g. Amount, Account Title, Account Number, IBAN, Bank, Branch, Beneficiary Name, Sender Name, Date, Time, Transaction ID, Reference, Channel, Status, Card. ONLY include a field whose value is actually present; OMIT anything not shown. Never invent or guess values.'\n].join('\\n');\nreturn [{ json: {\n  model: 'gpt-4o', temperature: 0, max_tokens: 400,\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: [\n      { type: 'text', text: user },\n      { type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + b64 } }\n    ] }\n  ]\n} }];"
       },
       "id": "app-build-vision",
       "name": "App Build Vision Body",
@@ -701,7 +790,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const text = $node['App Extract'].json.messageText || '';\nconst system = \"You classify messages from Pakistani RO accountants. Respond with ONLY valid JSON — no markdown, no backticks.\";\nconst user = [\n  'Classify the message and extract fields.',\n  'Message: \"' + text + '\"',\n  'Respond ONLY with: { \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\", \"amount_pkr\": <number or null>, \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"unknown\" | null, \"deposit_slip_ref\": \"<string or null>\", \"description\": \"<one line>\" }'\n].join('\\n');\nreturn [{ json: {\n  model: 'llama-3.1-8b-instant', temperature: 0, max_tokens: 300,\n  messages: [ { role: 'system', content: system }, { role: 'user', content: user } ]\n} }];"
+        "jsCode": "const text = $node['App Extract'].json.messageText || '';\nconst system = \"You classify messages from Pakistani RO accountants. Respond with ONLY valid JSON — no markdown, no backticks.\";\nconst user = [\n  'Classify the message and extract fields.',\n  'Message: \"' + text + '\"',\n  'Respond ONLY with this JSON:',\n  '{ \"classification\": \"payment_proof\" | \"expense_proof\" | \"unrecognised\", \"amount_pkr\": <number or null>, \"payment_method\": \"bank_transfer\" | \"cash_deposit\" | \"unknown\" | null, \"deposit_slip_ref\": \"<string or null>\", \"fields\": [ { \"label\": \"<Title Case>\", \"value\": \"<text>\" } ] }',\n  'For \"fields\": include each concrete detail actually present in the message as a {label, value} pair (e.g. Amount, Bank, Reference, Beneficiary, Date). OMIT anything not stated; never invent values.'\n].join('\\n');\nreturn [{ json: {\n  model: 'llama-3.1-8b-instant', temperature: 0, max_tokens: 300,\n  messages: [ { role: 'system', content: system }, { role: 'user', content: user } ]\n} }];"
       },
       "id": "app-build-groq",
       "name": "App Build Groq Body",
@@ -746,7 +835,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const resp = $input.first().json;\nlet content = '';\ntry { content = resp.choices[0].message.content; } catch (e) { content = ''; }\nlet parsed;\ntry { parsed = JSON.parse(String(content).replace(/```json|```/g, '').trim()); }\ncatch (e) { parsed = { classification: 'unrecognised', amount_pkr: null, payment_method: null, deposit_slip_ref: null, description: 'Could not parse AI response' }; }\nconst allowed = ['payment_proof', 'expense_proof', 'unrecognised'];\nif (!allowed.includes(parsed.classification)) parsed.classification = 'unrecognised';\nlet amt = parsed.amount_pkr;\nif (typeof amt === 'string') { const n = parseFloat(amt.replace(/,/g, '')); amt = isNaN(n) ? null : n; }\nconst hasFile = $node['App Extract'].json.hasFile;\nreturn [{ json: {\n  extraction: {\n    classification: parsed.classification,\n    extractedAmount: (amt != null) ? String(amt) : undefined,\n    extractedPaymentMethod: parsed.payment_method || undefined,\n    slipRef: parsed.deposit_slip_ref || undefined,\n    description: parsed.description || undefined,\n    model: hasFile ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: parsed\n  }\n} }];"
+        "jsCode": "const resp = $input.first().json;\nlet content = '';\ntry { content = resp.choices[0].message.content; } catch (e) { content = ''; }\nlet parsed;\ntry { parsed = JSON.parse(String(content).replace(/```json|```/g, '').trim()); }\ncatch (e) { parsed = { classification: 'unrecognised', amount_pkr: null, payment_method: null, deposit_slip_ref: null, description: 'Could not parse AI response' }; }\nconst allowed = ['payment_proof', 'expense_proof', 'unrecognised'];\nif (!allowed.includes(parsed.classification)) parsed.classification = 'unrecognised';\nlet amt = parsed.amount_pkr;\nif (typeof amt === 'string') { const n = parseFloat(amt.replace(/,/g, '')); amt = isNaN(n) ? null : n; }\nconst fields = Array.isArray(parsed.fields)\n  ? parsed.fields\n      .filter(f => f && f.label != null && f.value != null && String(f.value).trim() !== '')\n      .map(f => ({ label: String(f.label), value: String(f.value) }))\n  : [];\nconst hasFile = $node['App Extract'].json.hasFile;\nreturn [{ json: {\n  extraction: {\n    classification: parsed.classification,\n    extractedAmount: (amt != null) ? String(amt) : undefined,\n    extractedPaymentMethod: parsed.payment_method || undefined,\n    slipRef: parsed.deposit_slip_ref || undefined,\n    fields,\n    model: hasFile ? 'gpt-4o' : 'llama-3.1-8b-instant',\n    rawResponse: parsed\n  }\n} }];"
       },
       "id": "app-parse",
       "name": "App Parse Extraction",
@@ -861,7 +950,7 @@
       "main": [
         [
           {
-            "node": "Download Image",
+            "node": "Is WhatsApp?",
             "type": "main",
             "index": 0
           }
@@ -869,6 +958,46 @@
         [
           {
             "node": "Build Groq Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is WhatsApp?": {
+      "main": [
+        [
+          {
+            "node": "Resolve WA Media",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve WA Media": {
+      "main": [
+        [
+          {
+            "node": "Download WA Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download WA Media": {
+      "main": [
+        [
+          {
+            "node": "Build Vision Body",
             "type": "main",
             "index": 0
           }

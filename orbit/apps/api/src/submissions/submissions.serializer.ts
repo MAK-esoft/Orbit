@@ -20,6 +20,7 @@ function serializeExtraction(e: any) {
     bankEmailTimestamp: e.bankEmailTimestamp,
     confidence: e.confidence,
     model: e.model,
+    fields: Array.isArray(e.fields) ? e.fields : [],
     createdAt: e.createdAt,
   };
 }

@@ -294,6 +294,19 @@ export class SubmissionsService {
     if (dto.paymentTypeNote !== undefined) data.paymentTypeNote = dto.paymentTypeNote;
     if (dto.bankName !== undefined) data.bankName = dto.bankName;
     if (dto.referenceNumber !== undefined) data.referenceNumber = dto.referenceNumber;
+    if (dto.notes !== undefined) data.notes = dto.notes?.trim() ? dto.notes : null;
+    if (dto.paymentDate !== undefined) {
+      const pd = new Date(dto.paymentDate);
+      if (Number.isNaN(pd.getTime())) {
+        throw new BadRequestException('Invalid payment date');
+      }
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (pd > today) {
+        throw new BadRequestException('Payment date cannot be in the future');
+      }
+      data.paymentDate = pd;
+    }
 
     if (
       (data.paymentType === PaymentType.OTHER || submission.paymentType === PaymentType.OTHER) &&

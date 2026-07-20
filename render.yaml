@@ -1,0 +1,170 @@
+# ============================================================
+# Render Blueprint for Orbit + n8n (demo / free plan)
+#
+# One-time setup:
+#   1. Push this file to the repo (Render reads it from the repo root).
+#   2. Render Dashboard → New → Blueprint → pick the MAK-esoft/Orbit repo.
+#   3. Render creates: Postgres, Key Value, API, Web, n8n.
+#   4. Fill the `sync: false` vars when prompted (see RENDER.md for exact values).
+#
+# ⚠ Free-plan caveats:
+#   - Web services sleep after ~15 min idle (cold start 30–60s). Wake the n8n
+#     service before a live WhatsApp test so Meta's webhook lands.
+#   - Free Postgres is deleted after ~30 days.
+#   - No persistent disk: uploaded files live on ephemeral storage (UPLOAD_DIR
+#     = /tmp/uploads) and are cleared on redeploy/sleep. Fine for a demo.
+#   - n8n shares the same Postgres (its tables don't collide with Orbit's).
+# ============================================================
+
+databases:
+  - name: orbit-db
+    plan: free
+    databaseName: orbit
+    region: singapore
+
+services:
+  # --- Redis-compatible Key Value (rate limiting + notifications) ---
+  - type: keyvalue
+    name: orbit-kv
+    plan: free
+    region: singapore
+    ipAllowList: [] # internal only
+    maxmemoryPolicy: allkeys-lru
+
+  # --- NestJS API ---
+  - type: web
+    name: orbit-api
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: orbit
+    buildCommand: npm ci --include=dev && npx prisma generate --schema apps/api/prisma/schema.prisma && npm run build -w @orbit/api
+    # start:prod runs `prisma migrate deploy` + idempotent seed, then boots.
+    startCommand: npm run start:prod -w @orbit/api
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: UPLOAD_DIR
+        value: /tmp/uploads
+      - key: DATABASE_URL
+        fromDatabase:
+          name: orbit-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: orbit-kv
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # Shared secret between the API and n8n (/integrations/*). Generated once
+      # here and copied to the n8n service below.
+      - key: INTEGRATION_API_KEY
+        generateValue: true
+      # Cross-service URLs — set in the dashboard after the services get URLs.
+      - key: FRONTEND_URL # https://orbit-web-XXXX.onrender.com
+        sync: false
+      - key: API_URL # https://orbit-api-XXXX.onrender.com
+        sync: false
+      - key: PUBLIC_API_BASE_URL # same as API_URL (used for app round-trip file fetch)
+        sync: false
+      - key: N8N_APP_SUBMISSION_WEBHOOK_URL # https://orbit-n8n-XXXX.onrender.com/webhook/app-submission
+        sync: false
+
+  # --- Next.js web ---
+  - type: web
+    name: orbit-web
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: orbit
+    buildCommand: npm ci --include=dev && npm run build -w @orbit/web
+    startCommand: npm run start:prod -w @orbit/web
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # The web server proxies /api/* to this (server-side rewrite → cookies stay first-party).
+      - key: NEXT_PUBLIC_API_URL # https://orbit-api-XXXX.onrender.com
+        sync: false
+
+  # --- n8n (workflow engine) ---
+  - type: web
+    name: orbit-n8n
+    runtime: image
+    plan: free
+    region: singapore
+    image:
+      url: docker.io/n8nio/n8n:latest
+    envVars:
+      # Listen on Render's default port so its router reaches n8n.
+      - key: N8N_PORT
+        value: "10000"
+      - key: N8N_PROTOCOL
+        value: https
+      - key: N8N_HOST # orbit-n8n-XXXX.onrender.com (hostname only, no scheme)
+        sync: false
+      - key: WEBHOOK_URL # https://orbit-n8n-XXXX.onrender.com
+        sync: false
+      # Fixed key so stored data stays readable across restarts.
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
+      - key: N8N_BASIC_AUTH_ACTIVE
+        value: "true"
+      - key: N8N_BASIC_AUTH_USER
+        value: admin
+      - key: N8N_BASIC_AUTH_PASSWORD
+        generateValue: true
+      - key: N8N_BLOCK_ENV_ACCESS_IN_NODE
+        value: "false"
+      - key: N8N_RUNNERS_ENABLED
+        value: "true"
+      - key: GENERIC_TIMEZONE
+        value: Asia/Karachi
+      # Persist workflows/executions in the shared Postgres (no disk on free).
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        fromDatabase:
+          name: orbit-db
+          property: host
+      - key: DB_POSTGRESDB_PORT
+        fromDatabase:
+          name: orbit-db
+          property: port
+      - key: DB_POSTGRESDB_DATABASE
+        fromDatabase:
+          name: orbit-db
+          property: database
+      - key: DB_POSTGRESDB_USER
+        fromDatabase:
+          name: orbit-db
+          property: user
+      - key: DB_POSTGRESDB_PASSWORD
+        fromDatabase:
+          name: orbit-db
+          property: password
+      - key: DB_POSTGRESDB_SSL_ENABLED
+        value: "true"
+      - key: DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED
+        value: "false"
+      # Orbit integration + workflow secrets.
+      - key: ORBIT_API_BASE_URL # https://orbit-api-XXXX.onrender.com/api
+        sync: false
+      - key: INTEGRATION_API_KEY # copied from the API service (must match)
+        fromService:
+          type: web
+          name: orbit-api
+          envVarKey: INTEGRATION_API_KEY
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_API_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false

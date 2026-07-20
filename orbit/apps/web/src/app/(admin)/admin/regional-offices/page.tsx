@@ -16,9 +16,12 @@ interface RegionalOffice {
   code: string;
   city: string | null;
   region: string | null;
+  whatsappPhone: string | null;
   isActive: boolean;
   userCount: number;
 }
+
+const phoneRegex = /^[0-9+\-\s]*$/;
 
 const schema = z.object({
   name: z.string().min(2, 'Required'),
@@ -28,6 +31,11 @@ const schema = z.object({
     .regex(/^[A-Za-z0-9-]+$/, 'Letters, numbers and hyphens only'),
   city: z.string().optional(),
   region: z.string().optional(),
+  whatsappPhone: z
+    .string()
+    .max(32, 'Too long')
+    .regex(phoneRegex, 'Digits, +, spaces and dashes only')
+    .optional(),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -36,6 +44,7 @@ export default function RegionalOfficesPage() {
   const [offices, setOffices] = useState<RegionalOffice[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [editingWa, setEditingWa] = useState<RegionalOffice | null>(null);
   const {
     register,
     handleSubmit,
@@ -104,6 +113,12 @@ export default function RegionalOfficesPage() {
           <Field label="Region">
             <Input {...register('region')} placeholder="Punjab" />
           </Field>
+          <Field label="WhatsApp number" error={errors.whatsappPhone?.message}>
+            <Input {...register('whatsappPhone')} placeholder="e.g. 03012715214" />
+            <p className="mt-1 text-meta text-text-secondary">
+              Inbound WhatsApp proofs from this number are attributed to this office.
+            </p>
+          </Field>
           <div className="md:col-span-2">
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting ? 'Creating…' : 'Create office'}
@@ -119,6 +134,7 @@ export default function RegionalOfficesPage() {
               <Th>Name</Th>
               <Th>Code</Th>
               <Th>City</Th>
+              <Th>WhatsApp #</Th>
               <Th>Users</Th>
               <Th>Status</Th>
               <th className="px-4 py-2 text-right font-medium">Actions</th>
@@ -127,13 +143,13 @@ export default function RegionalOfficesPage() {
           <tbody>
             {offices === null ? (
               <tr>
-                <td colSpan={6} className="p-6 text-center text-text-secondary">
+                <td colSpan={7} className="p-6 text-center text-text-secondary">
                   Loading…
                 </td>
               </tr>
             ) : offices.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-10 text-center text-text-secondary">
+                <td colSpan={7} className="p-10 text-center text-text-secondary">
                   No regional offices yet. Create one to get started.
                 </td>
               </tr>
@@ -148,6 +164,13 @@ export default function RegionalOfficesPage() {
                   <Td className="font-medium text-text-primary">{o.name}</Td>
                   <Td>{o.code}</Td>
                   <Td>{o.city ?? '—'}</Td>
+                  <Td>
+                    {o.whatsappPhone ? (
+                      <span className="font-mono text-text-primary">{o.whatsappPhone}</span>
+                    ) : (
+                      <span className="text-text-secondary">—</span>
+                    )}
+                  </Td>
                   <Td>{o.userCount}</Td>
                   <Td>
                     <span
@@ -159,6 +182,12 @@ export default function RegionalOfficesPage() {
                     </span>
                   </Td>
                   <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => setEditingWa(o)}
+                      className="mr-3 text-meta text-primary hover:underline"
+                    >
+                      WhatsApp #
+                    </button>
                     <button
                       onClick={() => router.push(`/admin/ledger?roId=${o.id}`)}
                       className="mr-3 text-meta text-primary hover:underline"
@@ -177,6 +206,91 @@ export default function RegionalOfficesPage() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {editingWa && (
+        <WhatsAppEditModal
+          office={editingWa}
+          onClose={() => setEditingWa(null)}
+          onSaved={async () => {
+            setEditingWa(null);
+            await load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function WhatsAppEditModal({
+  office,
+  onClose,
+  onSaved,
+}: {
+  office: RegionalOffice;
+  onClose: () => void;
+  onSaved: () => void | Promise<void>;
+}) {
+  const [value, setValue] = useState(office.whatsappPhone ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    const trimmed = value.trim();
+    if (trimmed && !phoneRegex.test(trimmed)) {
+      setError('Digits, +, spaces and dashes only');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.patch(`/regional-offices/${office.id}`, { whatsappPhone: trimmed });
+      await onSaved();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not save WhatsApp number');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-lg border border-border bg-surface p-6 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-card-title text-text-primary">WhatsApp number</h2>
+        <p className="mt-1 text-meta text-text-secondary">
+          {office.name} — inbound WhatsApp proofs from this number are attributed to this
+          office. Leave blank to unassign.
+        </p>
+        {error && (
+          <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-meta text-status-rejected">
+            {error}
+          </div>
+        )}
+        <div className="mt-4">
+          <Input
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="e.g. 03012715214"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') save();
+            }}
+          />
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={busy}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+        </div>
       </div>
     </div>
   );

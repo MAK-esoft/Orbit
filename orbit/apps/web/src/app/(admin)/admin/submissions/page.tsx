@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download } from 'lucide-react';
 import { api } from '@/lib/api';
 import {
@@ -8,39 +8,55 @@ import {
   RegionalOffice,
   Submission,
 } from '@/lib/types';
+import { usePersistentState } from '@/lib/use-persistent-state';
 import { PageHeader } from '@/components/page-header';
 import { Pagination } from '@/components/pagination';
 import { SubmissionsTable } from '@/components/submissions-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { DateRangePicker } from '@/components/ui/date-picker';
 import { EmptyState, TableSkeleton } from '@/components/ui/states';
+
+const DEFAULT_FILTERS = {
+  roId: '',
+  status: '',
+  paymentType: '',
+  dateFrom: '',
+  dateTo: '',
+  search: '',
+  sortBy: 'createdAt',
+  sortDir: 'desc' as 'asc' | 'desc',
+};
 
 export default function AdminSubmissionsPage() {
   const [rows, setRows] = useState<Submission[] | null>(null);
   const [meta, setMeta] = useState<PaginatedMeta | null>(null);
   const [ros, setRos] = useState<RegionalOffice[]>([]);
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState({
-    roId: '',
-    status: '',
-    paymentType: '',
-    dateFrom: '',
-    dateTo: '',
-    search: '',
-  });
+  // Filters persist per-browser (survive logout/login) via localStorage.
+  const [filters, setFilters, hydrated] = usePersistentState(
+    'orbit.filters.adminRequests',
+    DEFAULT_FILTERS,
+  );
+  const appliedUrl = useRef(false);
 
   useEffect(() => {
     api.get<RegionalOffice[]>('/regional-offices').then(setRos).catch(() => setRos([]));
-    // Pre-apply an RO filter passed via the URL (e.g. from the Offices page).
-    const sp = new URLSearchParams(window.location.search);
-    const roId = sp.get('roId');
-    if (roId) setFilters((f) => ({ ...f, roId }));
   }, []);
+
+  // A roId passed via the URL (e.g. from the Offices page) overrides the
+  // persisted office filter. Applied once, after the persisted value loads.
+  useEffect(() => {
+    if (!hydrated || appliedUrl.current) return;
+    appliedUrl.current = true;
+    const roId = new URLSearchParams(window.location.search).get('roId');
+    if (roId) setFilters((f) => ({ ...f, roId }));
+  }, [hydrated, setFilters]);
 
   const buildParams = useCallback(() => {
     const p = new URLSearchParams({ page: String(page), limit: '25' });
-    Object.entries(filters).forEach(([k, v]) => v && p.set(k, v));
+    Object.entries(filters).forEach(([k, v]) => v && p.set(k, String(v)));
     return p;
   }, [page, filters]);
 
@@ -58,12 +74,21 @@ export default function AdminSubmissionsPage() {
   }, [buildParams]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (hydrated) load();
+  }, [load, hydrated]);
 
-  function set<K extends keyof typeof filters>(key: K, value: string) {
+  function set<K extends keyof typeof filters>(key: K, value: (typeof filters)[K]) {
     setPage(1);
     setFilters((f) => ({ ...f, [key]: value }));
+  }
+
+  function onSort(col: string) {
+    setPage(1);
+    setFilters((f) =>
+      f.sortBy === col
+        ? { ...f, sortDir: f.sortDir === 'asc' ? 'desc' : 'asc' }
+        : { ...f, sortBy: col, sortDir: 'desc' },
+    );
   }
 
   function exportCsv() {
@@ -111,17 +136,15 @@ export default function AdminSubmissionsPage() {
           <option value="CHEQUE">Cheque</option>
           <option value="OTHER">Other</option>
         </Select>
-        <Input
-          type="date"
-          value={filters.dateFrom}
-          onChange={(e) => set('dateFrom', e.target.value)}
-          title="Payment date from"
-        />
-        <Input
-          type="date"
-          value={filters.dateTo}
-          onChange={(e) => set('dateTo', e.target.value)}
-          title="Payment date to"
+        <DateRangePicker
+          className="col-span-2 md:col-span-1"
+          from={filters.dateFrom}
+          to={filters.dateTo}
+          onChange={({ from, to }) => {
+            setPage(1);
+            setFilters((f) => ({ ...f, dateFrom: from, dateTo: to }));
+          }}
+          placeholder="Payment date"
         />
         <Input
           placeholder="Search ref / bank"
@@ -137,7 +160,13 @@ export default function AdminSubmissionsPage() {
           <EmptyState title="No requests found" message="Try adjusting your filters." />
         ) : (
           <>
-            <SubmissionsTable rows={rows} basePath="/admin/submissions" showRo />
+            <SubmissionsTable
+              rows={rows}
+              basePath="/admin/submissions"
+              showRo
+              sort={{ by: filters.sortBy, dir: filters.sortDir }}
+              onSort={onSort}
+            />
             {meta && <Pagination meta={meta} onPage={setPage} />}
           </>
         )}

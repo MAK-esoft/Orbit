@@ -23,6 +23,7 @@ export class RegionalOfficesService {
       code: o.code,
       city: o.city,
       region: o.region,
+      whatsappPhone: o.whatsappPhone,
       isActive: o.isActive,
       userCount: o._count.users,
       createdAt: o.createdAt,
@@ -37,31 +38,57 @@ export class RegionalOfficesService {
 
   async create(dto: CreateRegionalOfficeDto) {
     try {
-      return await this.prisma.regionalOffice.create({ data: dto });
+      return await this.prisma.regionalOffice.create({
+        data: this.normalize(dto),
+      });
     } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002'
-      ) {
-        throw new ConflictException(`RO code "${dto.code}" already exists`);
-      }
-      throw e;
+      throw this.mapUniqueConflict(e, dto);
     }
   }
 
   async update(id: string, dto: UpdateRegionalOfficeDto) {
     await this.findOne(id);
     try {
-      return await this.prisma.regionalOffice.update({ where: { id }, data: dto });
+      return await this.prisma.regionalOffice.update({
+        where: { id },
+        data: this.normalize(dto),
+      });
     } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002'
-      ) {
-        throw new ConflictException(`RO code "${dto.code}" already exists`);
-      }
-      throw e;
+      throw this.mapUniqueConflict(e, dto);
     }
+  }
+
+  /**
+   * Coerce a blank WhatsApp number to null so the unique index treats "cleared"
+   * as absent (multiple offices may have no number; Postgres allows many NULLs).
+   */
+  private normalize<T extends { whatsappPhone?: string }>(dto: T) {
+    if (dto.whatsappPhone !== undefined) {
+      return { ...dto, whatsappPhone: dto.whatsappPhone.trim() || null };
+    }
+    return dto;
+  }
+
+  /** Turn a Prisma unique-constraint error into a specific ConflictException. */
+  private mapUniqueConflict(
+    e: unknown,
+    dto: CreateRegionalOfficeDto | UpdateRegionalOfficeDto,
+  ) {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === 'P2002'
+    ) {
+      const target = String(
+        (e.meta as { target?: string | string[] })?.target ?? '',
+      );
+      if (target.includes('whatsapp_phone')) {
+        return new ConflictException(
+          `WhatsApp number "${dto.whatsappPhone}" is already assigned to another office`,
+        );
+      }
+      return new ConflictException(`RO code "${dto.code}" already exists`);
+    }
+    return e;
   }
 
   async findUsers(id: string) {

@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
 } from 'class-validator';
 
 /**
@@ -39,4 +40,12 @@ export class UpdateSubmissionDto {
   @IsString()
   @Length(0, 255)
   referenceNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Payment date must be YYYY-MM-DD' })
+  paymentDate?: string;
 }
