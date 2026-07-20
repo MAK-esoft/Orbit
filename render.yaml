@@ -121,6 +121,14 @@ services:
         value: "false"
       - key: N8N_RUNNERS_ENABLED
         value: "true"
+      # Free tier is 512 MB RAM — let V8 use more of it before GC gives up,
+      # and drop telemetry to shave memory. n8n is borderline at 512 MB.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=460"
+      - key: N8N_DIAGNOSTICS_ENABLED
+        value: "false"
+      - key: N8N_VERSION_NOTIFICATIONS_ENABLED
+        value: "false"
       - key: GENERIC_TIMEZONE
         value: Asia/Karachi
       # Persist workflows/executions in the shared Postgres (no disk on free).
