@@ -60,21 +60,34 @@ export default function AdminSubmissionsPage() {
     return p;
   }, [page, filters]);
 
-  const load = useCallback(async () => {
-    setRows(null);
-    try {
-      const { data, meta } = await api.page<Submission[]>(
-        `/submissions?${buildParams()}`,
-      );
-      setRows(data ?? []);
-      setMeta((meta as unknown as PaginatedMeta) ?? null);
-    } catch {
-      setRows([]);
-    }
-  }, [buildParams]);
+  // `silent` refreshes in place (no skeleton flash) — used by the auto-poll.
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setRows(null);
+      try {
+        const { data, meta } = await api.page<Submission[]>(
+          `/submissions?${buildParams()}`,
+        );
+        setRows(data ?? []);
+        setMeta((meta as unknown as PaginatedMeta) ?? null);
+      } catch {
+        if (!silent) setRows([]);
+      }
+    },
+    [buildParams],
+  );
 
   useEffect(() => {
     if (hydrated) load();
+  }, [load, hydrated]);
+
+  // Auto-refresh every 5s so the list feels live. Skips while the tab is hidden.
+  useEffect(() => {
+    if (!hydrated) return;
+    const id = setInterval(() => {
+      if (!document.hidden) load(true);
+    }, 5000);
+    return () => clearInterval(id);
   }, [load, hydrated]);
 
   function set<K extends keyof typeof filters>(key: K, value: (typeof filters)[K]) {
