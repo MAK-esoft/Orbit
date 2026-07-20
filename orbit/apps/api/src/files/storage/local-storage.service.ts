@@ -13,11 +13,9 @@ import { SavedFile, StorageService } from './storage.interface';
 @Injectable()
 export class LocalStorageService implements StorageService {
   private readonly baseDir: string;
-  private readonly apiUrl: string;
 
   constructor(config: ConfigService) {
     this.baseDir = pathResolve(config.getOrThrow<string>('storage.uploadDir'));
-    this.apiUrl = config.getOrThrow<string>('apiUrl');
   }
 
   async save(file: Express.Multer.File, submissionId: string): Promise<SavedFile> {
@@ -39,8 +37,12 @@ export class LocalStorageService implements StorageService {
   }
 
   getUrl(path: string): string {
-    // Served through the authenticated /files endpoint, not directly.
-    return `${this.apiUrl}/api/files/${path}`;
+    // Return a RELATIVE URL so the browser loads the file same-origin through
+    // the web app's /api proxy. That keeps the auth cookie (SameSite=Strict,
+    // scoped to the web origin) attached — an absolute cross-origin API URL
+    // would drop it whenever the web and API are on different sites (e.g. two
+    // *.onrender.com subdomains), breaking image previews and downloads.
+    return `/api/files/${path}`;
   }
 
   resolve(path: string): string {
